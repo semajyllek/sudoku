@@ -3,14 +3,14 @@
 #include <vector>
 
 
-std::vector<int> initializeTryVector(bool presetVal) {
+std::vector<int> initializePosVector(bool presetVal, int boardsize) {
 	std::vector<int> vec;
 	if (presetVal) {
 		// preset value, 0 is marker for preset
 		vec.push_back(0);
 		return vec;
 	}
-	for (int i = 1; i < 10; i++) {
+	for (int i = 1; i < (boardsize + 1); i++) {
 		vec.push_back(i);
 	}
 	return vec;
@@ -52,4 +52,32 @@ bool anyZeros(int* arr, int arrLen) {
 	}
 	return false;
 }
+
+std::array<int,2> getNonBackTrackIndices(int boardsize, int rowIdx, int colIdx) {
+	if (colIdx < boardsize - 1) {
+		// go forward one column
+		colIdx++;
+	} else {
+		// go forward one row, to the first column
+		rowIdx++;
+		colIdx = 0;
+	}
+	std::array<int,2> newIndices = {rowIdx, colIdx};
+	return newIndices;
+}
+
+std::array<int, 2> getBackIndicesHelper(int boardsize, int rowIdx, int colIdx) {
+	// backtrack
+	if (colIdx > 0) {
+		// go back one column
+		colIdx--;
+	} else {
+		// go back one row, to the last column
+		rowIdx--;
+		colIdx = boardsize - 1;
+	}
+	std::array<int,2> newIndices = {rowIdx, colIdx};
+	return newIndices;
+}
+
 

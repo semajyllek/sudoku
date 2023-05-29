@@ -1,11 +1,20 @@
-### repo for generating and solving sudoku tables....
+### repo for generating and solving sudoku tables
 
-in progress....
-currently very fast at generating and solving **most** tables using modified backtracking only
+- uses naked groups
+- space and time efficient implementation using TinyBitSets
+- arrayBoard.h has array implmentation, bitBoard.h has bitset implementation
+- falls back on backtracking to guess when needed
 
-### goals:
 
-- implement HGSA solving (https://arxiv.org/pdf/0805.0697.pdf)
-- construct dataset of tables of various difficulties as 81 token sequences with 0s as unknowns (MASKED), upload to hf hub
-- train vs fine-tune seq2seq, eval performance
-- write-up
+Time tables using generated sudoku tables:
+
+
+|---|---|---|---|---|
+                        |    wall time 1 |  wall time 10 |  wall time 100 | wall time 1000 |  wall time 100000 |
+| easy (40 clues)       |                |               |                |                |                   |
+| medium (30 clues)     |                |               |                |                |                   |
+| hard (20 clues)       |                |               |                |                |                   |
+| very hard (10 clues)  |                |               |                |                |                   |
+| devilish (5 clues)    |                |               |                |                |                   |
+---
+
