@@ -9,7 +9,7 @@
 Time tables using generated sudoku tables:
 
 
-    | wall time 1 |  wall time 10 |  wall time 100 | wall time 1000 |  wall time 100000 |
+  time  | wall time 1 |  wall time 10 |  wall time 100 | wall time 1000 |  wall time 100000 |
 --- | --- |  --- | --- | --- | --- |
 easy (40 clues)  | 8473 | 3437 | 732 | 3233 | 356 | 
 medium (30 clues)  | 8473 | 3437 | 732 | 3233 | 356 | 
