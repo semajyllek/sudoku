@@ -20,8 +20,6 @@ or array, first. For this there is a pop() method that returns the first element
 #include "../tinybitset/tinybitset.h"
 
 
-const int BOARD_SIZE = 9;   // MUST be multiple of 3
-
 struct BitBoardCell {
 	int value;
 	TinyBitSet<BOARD_SIZE> possibilities;
