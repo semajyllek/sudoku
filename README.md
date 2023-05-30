@@ -9,16 +9,16 @@
 Time tables using generated sudoku tables in `data/data.zip`:
 
 
-  difficulty  | wall time 1 |  wall time 10 |  wall time 100 | wall time 1000 |
---- | --- |  --- | --- | --- | --- |
-| 79 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 69 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 59 clues  | 8473 | 3437 | 732 | 3233 | 356 |   
-| 49 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 39 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 29 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 19 clues  | 8473 | 3437 | 732 | 3233 | 356 | 
-| 9 clues   | 8473 | 3437 | 732 | 3233 | 356 | 
+  difficulty  | wall time 1 |  wall time 10 |  wall time 100 | wall time 1000 
+--- | --- |  --- | --- | --- 
+ 79 clues  | 8473 | 3437 | 732 | 3233  
+ 69 clues  | 8473 | 3437 | 732 | 3233  
+ 59 clues  | 8473 | 3437 | 732 | 3233    
+ 49 clues  | 8473 | 3437 | 732 | 3233  
+ 39 clues  | 8473 | 3437 | 732 | 3233   
+ 29 clues  | 8473 | 3437 | 732 | 3233   
+ 19 clues  | 8473 | 3437 | 732 | 3233  
+ 9 clues   | 8473 | 3437 | 732 | 3233 
 
 
 
