@@ -20,20 +20,20 @@ struct ArrayBoardCell {
 	vector<int> possibilities;
 };
 
-const int MAX_TRIES = 1000;
+const int MAX_TRIES = 20000000;
 
 class ArrayBoard{
 	public:
 		ArrayBoard();
 		~ArrayBoard() {};
 
-		// solve methods
-		bool backTrackSolve();
+		//solve public method 
+		bool multiSolve(int maxTries=0);
+		bool backTrackSolve(int mode=0, int maxTries=MAX_TRIES);
 
 		// board contruction helpers
 		void initializeBoard();
 		void initializeBoard(int fillNum);
-		void initializeBoard(ArrStruct arrobj);
 		void initializeBoard(int newBoard[BOARD_SIZE][BOARD_SIZE]);
 		void initializeBoard(ArrayBoardCell newBoard[BOARD_SIZE][BOARD_SIZE]);
 	
@@ -42,21 +42,35 @@ class ArrayBoard{
 		void printBoard();
 		bool debugUtil(int rowIdx, int colIdx, int val);
 		void saveBoard(string filename, unsigned int mode=ios::out, string header="\nNew Board: \n");
+
 	
 	private:
     	ArrayBoardCell board[BOARD_SIZE][BOARD_SIZE];
+
+		// initializer helpers
 		int genBoardValue(int i, int j);
 		void fillRemaining(int placed, int fillNum,  ArrayBoardCell tempBoard[BOARD_SIZE][BOARD_SIZE]);
 		void updatePossibilities();
 
 		// solve helpers
-		bool backTrackGuess(int rowIdx, int colIdx);
+		int getCandidate(int rowIdx, int colIdx, int mode);
+		bool backTrackGuess(int rowIdx, int colIdx, int mode=0);
 		array<int,2> getBackTrackIndices(int rowIdx, int colIdx);
+		
+		// checkers
 		bool checkValid(int row, int col, int candidate);
 		bool checkRow(int row, int candidate);
 		bool checkColumn(int col, int candidate);
 		bool checkBox(int row, int col, int candidate);	
+
+
 };
+
+/*
+
+	constructor, initializers
+
+*/
 
 
 ArrayBoard::ArrayBoard() {
@@ -64,7 +78,7 @@ ArrayBoard::ArrayBoard() {
 	for (int i = 0; i < BOARD_SIZE; i++) {
 		for (int j = 0; j < BOARD_SIZE; j++) {
 			board[i][j].value = 0;
-			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);;
+			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);
 		}
 	}
 }
@@ -73,7 +87,7 @@ void ArrayBoard::initializeBoard() {
 	for (int i = 0; i < BOARD_SIZE; i++) {
 		for (int j = 0; j < BOARD_SIZE; j++) {
 			board[i][j].value = 0;
-			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);;
+			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);
 		}
 	}
 }
@@ -85,17 +99,6 @@ void ArrayBoard::initializeBoard(int newBoard[BOARD_SIZE][BOARD_SIZE]) {
 	for (int i = 0; i < BOARD_SIZE; i++) {
 		for (int j = 0; j < BOARD_SIZE; j++) {
 			board[i][j].value = newBoard[i][j];
-			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);
-		}
-	}
-
-}
-
-void ArrayBoard::initializeBoard(ArrStruct arrobj) {
-	// fill board with newBoard values
-	for (int i = 0; i < BOARD_SIZE; i++) {
-		for (int j = 0; j < BOARD_SIZE; j++) {
-			board[i][j].value = arrobj.newBoard[i][j];
 			board[i][j].possibilities = initializePosVector(board[i][j].value, BOARD_SIZE);
 		}
 	}
@@ -126,7 +129,7 @@ void ArrayBoard::initializeBoard(int fillNum) {
 	// instead of sequentially filling the board, fill randomly
 	while ((allPosVec.size() > 0) && (placed < fillNum) && (tries < MAX_TRIES)) {
 		tries++;
-		
+
 		// randomly select a position from allPosVec
 		int rand_num = rand() % allPosVec.size();
 		vector<int> randPosVec = allPosVec[rand_num];
@@ -138,10 +141,10 @@ void ArrayBoard::initializeBoard(int fillNum) {
 		int i = randPosVec[0];
 		int j = randPosVec[1];
 		int candidate = genBoardValue(i, j);
-		board[i][j].value = candidate;
+		this->board[i][j].value = candidate;
 		placed++;
 
-		board[i][j].possibilities = initializePosVector(false, BOARD_SIZE);  
+		board[i][j].possibilities = initializePosVector(true, BOARD_SIZE);  
 		if ((placed > 1) && (placed % checkRate == 0)) {
 			// check if the board is solvable
 			ArrayBoard tempBoard;
@@ -150,9 +153,9 @@ void ArrayBoard::initializeBoard(int fillNum) {
 				// if not solvable, reset all current placements
 				initializeBoard();
 				placed = 0;
-				allPosVec = generateAllPositionVector();;
+				allPosVec = generateAllPositionVector();
 			} else {
-				tempBoard.printBoard();
+				//tempBoard.printBoard();
 				// if solvable, fill in remaining positions with random values from solved board
 				fillRemaining(placed, fillNum, tempBoard.board);
 				break;
@@ -163,6 +166,16 @@ void ArrayBoard::initializeBoard(int fillNum) {
 
 	// fill the remaining zero-entry positions tryMap with possible values
 	updatePossibilities();
+}
+
+
+int ArrayBoard::genBoardValue(int i, int j) {
+	int candidate;
+	do {
+		candidate = generateRandomBoardNumber();
+	}
+	while (!checkValid(i, j, candidate));
+	return candidate;
 }
 
 
@@ -177,8 +190,8 @@ void ArrayBoard::fillRemaining(int placed, int fillNum, ArrayBoardCell tempBoard
 			if (board[i][j].value == 0) {
 				float randPct = generateRandomPct();
 				if (generateRandomPct() < placePct) {
-					board[i][j].possibilities = initializePosVector(false, BOARD_SIZE);  
-					board[i][j].value = tempBoard[i][j].value;
+					this->board[i][j].possibilities = initializePosVector(true, BOARD_SIZE);  
+					this->board[i][j].value = tempBoard[i][j].value;
 					placed++;
 					if (placed == fillNum) {
 						return;
@@ -205,22 +218,24 @@ void ArrayBoard::updatePossibilities() {
 
 
 
-int ArrayBoard::genBoardValue(int i, int j) {
-	int candidate;
-	do {
-		candidate = generateRandomBoardNumber();
-	}
-	while (!checkValid(i, j, candidate));
-	return candidate;
+/*
+
+	solvers
+
+*/
+
+
+bool  ArrayBoard::multiSolve(int maxTries) {
+	return backTrackSolve(0, maxTries) || backTrackSolve(-1, maxTries) || backTrackSolve(2, maxTries);
 }
 
 
-
-bool ArrayBoard::backTrackSolve() {
+bool ArrayBoard::backTrackSolve(int mode, int maxTries) {
 	int rowIdx = 0, colIdx = 0;
-	printBoard();
-	while ((rowIdx < BOARD_SIZE) && (colIdx < BOARD_SIZE)) {
-		bool success = backTrackGuess(rowIdx, colIdx);
+	int tries = 0;
+	while ((rowIdx < BOARD_SIZE) && (colIdx < BOARD_SIZE) && (tries < MAX_TRIES)) {
+		tries++;
+		bool success = backTrackGuess(rowIdx, colIdx, mode);
 		array<int,2> newIndices;
 		if (success) {
 			// move to next cell
@@ -235,12 +250,20 @@ bool ArrayBoard::backTrackSolve() {
 			return false;
 		}
 	}
+
+	if ((rowIdx == BOARD_SIZE) || (colIdx == BOARD_SIZE)) {
+		return true;
+	}
+	if (tries > maxTries) {
+		std:cout << "max tries exceeded, last cell: " << board[BOARD_SIZE-1][BOARD_SIZE - 1].value << std::endl;
+		return false;
+	}
 	return true;
 }
 
 
 
-bool ArrayBoard::backTrackGuess(int rowIdx, int colIdx) {
+bool ArrayBoard::backTrackGuess(int rowIdx, int colIdx, int mode) {
 	/*
 	  takes row and column board position, attempts to fill with valid value,
 	  if successful, or position is already filled, returns true, else returns false
@@ -253,8 +276,7 @@ bool ArrayBoard::backTrackGuess(int rowIdx, int colIdx) {
 	bool success = false;
 	int candidate;
 	while (board[rowIdx][colIdx].possibilities.size() != 0) {
-		candidate =  board[rowIdx][colIdx].possibilities.back();
-		board[rowIdx][colIdx].possibilities.pop_back();
+		candidate = getCandidate(rowIdx, colIdx, mode);
 		success = checkValid(rowIdx, colIdx, candidate);
 		if (success) {
 			// remove candidate from possibilities
@@ -272,6 +294,28 @@ bool ArrayBoard::backTrackGuess(int rowIdx, int colIdx) {
 
 	return success;	
 }
+
+
+
+int ArrayBoard::getCandidate(int rowIdx, int colIdx, int mode) {
+	int candidate = 0;
+ 	if (mode == 0){
+		// get smallest candidate
+		candidate =  board[rowIdx][colIdx].possibilities.front();
+		board[rowIdx][colIdx].possibilities.erase(board[rowIdx][colIdx].possibilities.begin());
+	} else if (mode == -1) {
+		// get largest candidate
+		candidate =  board[rowIdx][colIdx].possibilities.back();
+		board[rowIdx][colIdx].possibilities.pop_back();
+	} else {
+		// get random candidate
+		int rand_num = rand() % board[rowIdx][colIdx].possibilities.size();
+		candidate = board[rowIdx][colIdx].possibilities[rand_num];
+		board[rowIdx][colIdx].possibilities.erase(board[rowIdx][colIdx].possibilities.begin() + rand_num);
+	}
+	return candidate;
+}
+
 
 
 array<int,2> ArrayBoard::getBackTrackIndices(int rowIdx, int colIdx) {
@@ -295,13 +339,11 @@ array<int,2> ArrayBoard::getBackTrackIndices(int rowIdx, int colIdx) {
 }
 
 
+/*
 
+	validity checks
 
-
-
-
-
-
+*/
 
 bool ArrayBoard::checkValid(int row, int col, int candidate) {
 	// check row
@@ -367,7 +409,9 @@ bool ArrayBoard::debugUtil(int rowIdx, int colIdx, int val) {
 
 
 
-
+/*
+	debugging
+*/
 void ArrayBoard::printBoard() {
 	cout << "\nBoard: " << endl;
 	for (int i = 0; i < BOARD_SIZE; i++) {

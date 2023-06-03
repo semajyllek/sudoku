@@ -10,7 +10,8 @@ void genBoards(int clues, int numBoards) {
 		asBoard.initializeBoard(clues); // initialize random board with ~40 prefilled cells
 		asBoard.printBoard();
 		asBoard.saveBoard(filename, ios::app);
-		asBoard.backTrackSolve();
+		std::cout << "Solving board " << i << std::endl;
+		asBoard.multiSolve();
 		asBoard.saveBoard(filename, ios::app, "\nSolved Board:\n");
 		asBoard.printBoard();
 	}
@@ -19,6 +20,6 @@ void genBoards(int clues, int numBoards) {
 
 int main() {
 	srand((unsigned) time(NULL));  // seed random number generator
-	genBoards(79, 49);	
+	genBoards(79, 2);	
 	return 0;
 }

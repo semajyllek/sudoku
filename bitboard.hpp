@@ -11,7 +11,6 @@ The only problem is that the bit representations don't offer iterators. They mus
 or array, first. For this there is a pop() method that returns the first element of the tinybitset, and removes it.
 */
 
-
 #include <iostream>  
 #include <string>
 #include <array>
@@ -19,6 +18,9 @@ or array, first. For this there is a pop() method that returns the first element
 #include "utils.hpp"
 #include "../tinybitset/tinybitset.h"
 
+
+int MAX_TRIALS = 20000000;
+int MAX_RANDOM_TRIALS = 10;
 
 struct BitBoardCell {
 	int value;
@@ -40,10 +42,13 @@ class BitSetBoard {
 		TinyBitSet<BOARD_SIZE> getUnusedVals(int row, int col);
 		
 		// board solve methods
-		bool backTrackSolve();
-		bool backTrackGuess(int rowIdx, int colIdx);
+		bool multiSolve();
+		bool randomSolve(int randomTrials=MAX_RANDOM_TRIALS, int maxTrials=10000);
+		bool backTrackSolve(int mode=0, int maxTrials=MAX_TRIALS);
+		bool backTrackGuess(int rowIdx, int colIdx, int mode=0);
 		bool checkValid(int rowIdx, int colIdx, int candidate);
 		std::array<int,2> getBackTrackIndices(int rowIdx, int colIdx); 
+		int getCandidate(int rowIdx, int colIdx, int mode);
 
 		// naked groups
 		void removeNakedGroups(bool init=false);
@@ -56,10 +61,16 @@ class BitSetBoard {
 		void removeNakedRowOrColumn(std::unordered_map<TinyBitRepType<BOARD_SIZE>, int> possMap, int fixed, bool isRow);
 
 
+		// remove unique from adjacent boxes methods
+		void treatAdjacentBoxes();
+		void searchAdjacentBox(int boxRow, int boxCol);
+		void removeUniqueFromAdjacentBoxes(TinyBitRepType<BOARD_SIZE> unique_row_bits[], TinyBitRepType<BOARD_SIZE> unique_col_bits[], int boxRow, int boxCol);
+
 		// util methods
 		void printUsedSets();
 		void printBoardPossibles();
 		void printBoard();
+		bool debugUtil(int rowIdx, int colIdx, int val);
 
 	
 	private:
@@ -69,6 +80,7 @@ class BitSetBoard {
 		TinyBitSet<BOARD_SIZE> usedboxset[BOARD_SIZE/3][BOARD_SIZE/3];
 		TinyBitSet<BOARD_SIZE> usedrowset[BOARD_SIZE];
 		TinyBitSet<BOARD_SIZE> usedcolset[BOARD_SIZE];
+
 };
 
 
@@ -100,10 +112,10 @@ void BitSetBoard::initializeBoard(int newBoard[BOARD_SIZE][BOARD_SIZE]) {
 		}
 	}
 
-	printBoard();
+	//printBoard();
 
 	// update possibilities and remove naked groups
-	updatePossibilities();
+	updatePossibilities(true);
 	//printUsedSets();
 	//printBoardPossibles();
 	removeNakedGroups(true);
@@ -130,10 +142,12 @@ void BitSetBoard::updatePossibilities(bool init) {
 		for (int col = 0; col < BOARD_SIZE; col++) {
 			if (board[row][col].value == 0) {
 				board[row][col].possibilities = getUnusedVals(row, col);
-			} else {
-				board[row][col].possibilities.removeall();
-			}
+			} 
+			
 			if (init) {
+				if (board[row][col].value != 0) {
+					board[row][col].possibilities.removeall();
+				}
 				board[row][col].og_possibilities = board[row][col].possibilities;
 			}
 		}
@@ -181,9 +195,12 @@ void BitSetBoard::removeNakedGroups(bool init) {
 	while (changed) {
 		treatNakedBoxes();
 	    treatNakedRowsAndColumns();
-	    changed = removeNakedSingles();
-		updatePossibilities(init);
 		//printBoardPossibles();
+		if (!init) {
+			return;
+		}
+		changed = removeNakedSingles();
+		updatePossibilities(init);
 
 	}
 }
@@ -194,7 +211,7 @@ bool BitSetBoard::removeNakedSingles() {
 	for (int row = 0; row < BOARD_SIZE; row++) {
 		for (int col = 0; col < BOARD_SIZE; col++) {
 			if (board[row][col].possibilities.getSetSize() == 1) {
-				board[row][col].value = board[row][col].possibilities.pop();
+				board[row][col].value = board[row][col].possibilities.popSmallest();
 				insertUsedSets(row, col);
 				changed = true;
 			}
@@ -208,7 +225,7 @@ bool BitSetBoard::removeNakedSingles() {
 void BitSetBoard::treatNakedBoxes() {
 	for (int boxRow = 0; boxRow < (BOARD_SIZE / 3); boxRow++) {
 		for (int boxCol = 0; boxCol < (BOARD_SIZE / 3); boxCol++) {
-			searchNakedBox(boxRow, boxCol);	
+			searchNakedBox(boxRow*3, boxCol*3);	
 		}
 	}
 }
@@ -217,8 +234,8 @@ void BitSetBoard::searchNakedBox(int boxRow, int boxCol) {
 	// make a map of possibility sets to counts O(BOARD_SIZE)
 	std::unordered_map<TinyBitRepType<BOARD_SIZE>, int> possMap;
 
-	for (int r = boxRow * 3; r < (boxRow * 3) + 3; r++) {
-		for (int c = (boxCol * 3); c < (boxCol * 3) + 3; c++) {
+	for (int r = boxRow; r < boxRow + 3; r++) {
+		for (int c = boxCol; c < boxCol + 3; c++) {
 			TinyBitRepType<BOARD_SIZE> bitint = board[r][c].possibilities.getBitInt();
 			if (bitint == 0) {
 				continue;
@@ -303,6 +320,52 @@ void BitSetBoard::removeNakedRowOrColumn(std::unordered_map<TinyBitRepType<BOARD
 	}
 }
 
+void BitSetBoard::treatAdjacentBoxes() {
+	for (int boxRow = 0; boxRow < (BOARD_SIZE / 3); boxRow++) {
+		for (int boxCol = 0; boxCol < (BOARD_SIZE / 3); boxCol++) {
+			searchAdjacentBox(boxRow*3, boxCol*3);	
+		}
+	}
+}
+
+
+void BitSetBoard::searchAdjacentBox(int boxRow, int boxCol) {
+
+	// some size (8, 16, 32, 64) of unsigned fast int based on BOARD_SIZE
+	TinyBitRepType<BOARD_SIZE> unique_row_bitreps[BOARD_SIZE / 3] = {0};
+	TinyBitRepType<BOARD_SIZE> unique_col_bitreps[BOARD_SIZE / 3] = {0};
+
+	// e.g. 0-3, 3-6, 6-9 for BOARD_SIZE = 9
+	for (int r = boxRow; r < boxRow + (BOARD_SIZE / 3); r++) {	
+		for (int c = boxCol; c < boxCol + (BOARD_SIZE / 3); c++) {
+			unique_row_bitreps[r] &= (unique_row_bitreps[r] ^ board[r][c].possibilities.getBitInt());
+			unique_col_bitreps[c] &= (unique_col_bitreps[c] ^ board[r][c].possibilities.getBitInt());
+		}
+	}
+
+
+	// now go to the other boxes and remove the unique possibilities from the other boxes for the other rows and columns
+	removeUniqueFromAdjacentBoxes(unique_row_bitreps, unique_col_bitreps, boxRow, boxCol);
+}
+
+
+void BitSetBoard::removeUniqueFromAdjacentBoxes(TinyBitRepType<BOARD_SIZE> unique_row_bitreps[], TinyBitRepType<BOARD_SIZE> unique_col_bitreps[], int boxRow, int boxCol) {
+	for (int r = 0; r < BOARD_SIZE; r++) {
+		if (r >= boxRow && r < boxRow + (BOARD_SIZE / 3)) {
+			continue;
+		}
+		for (int c = 0; c < BOARD_SIZE; c++) {
+			if (c >= boxCol && c < boxCol + (BOARD_SIZE / 3)) {
+				continue;
+			}
+			board[r][c].possibilities = board[r][c].possibilities.leftDifference(unique_row_bitreps[r]);
+			board[r][c].possibilities = board[r][c].possibilities.leftDifference(unique_col_bitreps[c]);
+		}
+	}
+}
+
+
+
 
 
 
@@ -311,10 +374,33 @@ void BitSetBoard::removeNakedRowOrColumn(std::unordered_map<TinyBitRepType<BOARD
   
 */
 
-bool BitSetBoard::backTrackSolve() {
+
+bool BitSetBoard::multiSolve() {
+	return backTrackSolve(0) || backTrackSolve(-1);
+}
+
+bool BitSetBoard::randomSolve(int randomTrials, int maxTrials) {
+	for (int i = 0; i < randomTrials; i++) {
+		// mode=4 sets it into random search
+		if (backTrackSolve(4, maxTrials)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool BitSetBoard::backTrackSolve(int mode, int maxTrials) {
 	int rowIdx = 0, colIdx = 0;
+	int trials = 0;
 	while ((rowIdx < BOARD_SIZE) && (colIdx < BOARD_SIZE)) {
-		bool success = backTrackGuess(rowIdx, colIdx);
+		//printBoard();
+		trials++;
+		if (trials > maxTrials) {
+			std::cout << "searched past max trials: " << MAX_TRIALS << std::endl;
+			return false;
+		}
+	
+		bool success = backTrackGuess(rowIdx, colIdx, mode);
 		std::array<int,2> newIndices;
 		if (success) {
 			// move to next cell
@@ -326,6 +412,7 @@ bool BitSetBoard::backTrackSolve() {
 		rowIdx = newIndices[0];
 		colIdx = newIndices[1];
 		if ((rowIdx < 0) || (colIdx < 0)) {
+			// std::cout << "boundaries met, unvolvable board." << std::endl;
 			return false;
 		}
 	}
@@ -335,9 +422,25 @@ bool BitSetBoard::backTrackSolve() {
 
 
 
+int BitSetBoard::getCandidate(int rowIdx, int colIdx, int mode) {
+	if (mode == 0) {
+		return board[rowIdx][colIdx].possibilities.popSmallest();
+	} else if (mode == -1) {
+		return board[rowIdx][colIdx].possibilities.popLargest();
+	} else {
+		std::vector<int> possN = board[rowIdx][colIdx].possibilities.getIntegerElements();
+		if (possN.size() == 0) {
+			return 0;
+		}
+		int randN = possN[rand() % possN.size()];
+		board[rowIdx][colIdx].possibilities.remove(randN);
+		return randN;
+	}
+
+}
 
 
-bool BitSetBoard::backTrackGuess(int rowIdx, int colIdx) {
+bool BitSetBoard::backTrackGuess(int rowIdx, int colIdx, int mode) {
 	/*
 	  takes row and column board position, attempts to fill with valid value,
 	  if successful, or position is already filled, returns true, else returns false
@@ -350,7 +453,7 @@ bool BitSetBoard::backTrackGuess(int rowIdx, int colIdx) {
 	// find valid
 	int candidate;
 	do {
-       candidate = board[rowIdx][colIdx].possibilities.pop();
+       candidate = getCandidate(rowIdx, colIdx, mode);
 	}
 	while ((candidate != 0) && !checkValid(rowIdx, colIdx, candidate));
 
@@ -362,6 +465,9 @@ bool BitSetBoard::backTrackGuess(int rowIdx, int colIdx) {
 
 	board[rowIdx][colIdx].value = candidate;
 	insertUsedSets(rowIdx, colIdx);
+	updatePossibilities();
+	//removeNakedGroups(false);
+
 	return true;
 
 }
@@ -478,5 +584,13 @@ void BitSetBoard::printBoard() {
 	std::cout << "-------------------------" << std::endl;
 }
 
+
+
+bool BitSetBoard::debugUtil(int rowIdx, int colIdx, int val) {
+	if (board[rowIdx][colIdx].value == val) {
+		return true;
+	}
+	return false;
+}
 
 
