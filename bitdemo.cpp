@@ -54,7 +54,7 @@ int main() {
 	// BitSetBoard bsBoard;
 
     // //solve easy board
-	// bsBoard.initializeBoard(hardarrayBoard);
+	// bsBoard.initializeBoard(superHard8Board);
 	// bsBoard.printBoard();
     // bool solved = bsBoard.multiSolve(); 
 	// // bool solved = bsBoard.randomSolve();

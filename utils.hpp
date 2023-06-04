@@ -192,6 +192,15 @@ bool anyZeros(int* arr, int arrLen) {
 	return false;
 }
 
+
+int resetMode(int mode, int defaultVal = -2) {
+	if (mode > 0) {
+		return defaultVal;
+	}
+	return mode;
+}
+
+
 array<int,2> getNonBackTrackIndices(int boardsize, int rowIdx, int colIdx) {
 	if (colIdx < boardsize - 1) {
 		// go forward one column

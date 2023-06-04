@@ -17,6 +17,8 @@ or array, first. For this there is a pop() method that returns the first element
 #include <unordered_map>
 #include "utils.hpp"
 #include "../tinybitset/tinybitset.h"
+#include <omp.h>
+
 
 
 int MAX_TRIALS = 20000000;
@@ -43,6 +45,7 @@ class BitSetBoard {
 		
 		// board solve methods
 		bool multiSolve();
+		bool multiSolveMP();
 		bool randomSolve(int randomTrials=MAX_RANDOM_TRIALS, int maxTrials=10000);
 		bool backTrackSolve(int mode=0, int maxTrials=MAX_TRIALS);
 		bool backTrackGuess(int rowIdx, int colIdx, int mode=0);
@@ -379,15 +382,29 @@ bool BitSetBoard::multiSolve() {
 	return backTrackSolve(0) || backTrackSolve(-1);
 }
 
+bool BitSetBoard::multiSolveMP() {
+	omp_set_num_threads(BOARD_SIZE);
+	bool found = false;
+
+	#pragma omp parallel for
+	for (int i = 0; i < BOARD_SIZE; i++) {
+		if (!found) {
+			found = backTrackSolve(i+1);
+		}
+	}
+	return found;
+}
+
 bool BitSetBoard::randomSolve(int randomTrials, int maxTrials) {
 	for (int i = 0; i < randomTrials; i++) {
 		// mode=4 sets it into random search
-		if (backTrackSolve(4, maxTrials)) {
+		if (backTrackSolve(-2, maxTrials)) {
 			return true;
 		}
 	}
 	return false;
 }
+
 
 bool BitSetBoard::backTrackSolve(int mode, int maxTrials) {
 	int rowIdx = 0, colIdx = 0;
@@ -401,6 +418,8 @@ bool BitSetBoard::backTrackSolve(int mode, int maxTrials) {
 		}
 	
 		bool success = backTrackGuess(rowIdx, colIdx, mode);
+		mode = resetMode(mode);
+
 		std::array<int,2> newIndices;
 		if (success) {
 			// move to next cell
@@ -412,7 +431,7 @@ bool BitSetBoard::backTrackSolve(int mode, int maxTrials) {
 		rowIdx = newIndices[0];
 		colIdx = newIndices[1];
 		if ((rowIdx < 0) || (colIdx < 0)) {
-			// std::cout << "boundaries met, unvolvable board." << std::endl;
+			std::cout << "boundaries met, unvolvable board." << std::endl;
 			return false;
 		}
 	}
@@ -427,7 +446,7 @@ int BitSetBoard::getCandidate(int rowIdx, int colIdx, int mode) {
 		return board[rowIdx][colIdx].possibilities.popSmallest();
 	} else if (mode == -1) {
 		return board[rowIdx][colIdx].possibilities.popLargest();
-	} else {
+	} else if (mode == -2) {
 		std::vector<int> possN = board[rowIdx][colIdx].possibilities.getIntegerElements();
 		if (possN.size() == 0) {
 			return 0;
@@ -435,6 +454,12 @@ int BitSetBoard::getCandidate(int rowIdx, int colIdx, int mode) {
 		int randN = possN[rand() % possN.size()];
 		board[rowIdx][colIdx].possibilities.remove(randN);
 		return randN;
+	} else if (mode > 0) {
+		board[rowIdx][colIdx].possibilities.remove(mode);
+		return mode;
+	} else {
+		std::cout << "invalid mode" << std::endl;
+		return 0;
 	}
 
 }
