@@ -11,14 +11,14 @@ Time tables in ms using pseudo-randomly generated sudoku tables in `data/data.zi
 
   clues  | array mean | array min | array max | tbs mean | tbs min | tbs max | mp tbs mean | mp tbs min | mp tbs max 
   ---    | ---        |  ---      | ---       | ---      | ---     |  ---    | ---         | ---        | --- 
-  9      | 0.02       | 7e-5      | 5.75      | 7e-3     | 1e-4    | 2.13    | 4e-3        | 5e-5       | 1.14 
-  19     | 0.002      | 5e-5      | 0.88      | 4e-3     | 7e-5    | 0.05    | 2e-4        | 4e-5       | 0.03
-  29     | 0.009      | 3e-5      | 7.96      | 3e-3     | 2e-6    | 2.96    | 2e-3        | 2e-6       | 1.63 
-  39     | 0.005      | 2e-5      | 0.22      | 8e-5     | 1e-6    | 0.07    | 4e-5        | 0          | 0.04
-  49     | 4e-5       | 2e-5      | 3e-4      | 3e-6     | 1e-6    | 6e-5    | 2e-6        | 0          | 4e-5
-  59     | 2e-5       | 1e-5      | 8e-5      | 1e-6     | 1e-6    | 9e-6    | 1e-6        | 0          | 8e-6
-  69     | 1e-5       | 7e-6      | 4e-5      | 1e-6     | 1e-6    | 3e-6    | 8e-7        | 0          | 2e-6
-  79     | 8e-6       | 2e-6      | 2e-5      | 1e-6     | 1e-6    | 7e-6    | 8e-7        | 0          | 3e-6 
+  9      | 0.02       | 7e-5      | 5.75      | 7e-3     | 1e-4    | 2.13    | $${\color{lightblue}4e-3}$$        | 5e-5       | 1.14 
+  19     | 2e-3       | 5e-5      | 0.88      | 4e-3     | 7e-5    | 0.05    | $${\color{lightblue}2e-4}$$        | 4e-5       | 0.03
+  29     | 9e-3       | 3e-5      | 7.96      | 3e-3     | 2e-6    | 2.96    | $${\color{lightblue}2e-3}$$        | 2e-6       | 1.63 
+  39     | 5e-3       | 2e-5      | 0.22      | 8e-5     | 1e-6    | 0.07    | $${\color{lightblue}4e-5}$$        | 0          | 0.04
+  49     | 4e-5       | 2e-5      | 3e-4      | 3e-6     | 1e-6    | 6e-5    | $${\color{lightblue}2e-6}$$        | 0          | 4e-5
+  59     | 2e-5       | 1e-5      | 8e-5      | $${\color{lightblue}1e-6}$$   | 1e-6    | 9e-6    | $${\color{lightblue}1e-6}$$        | 0          | 8e-6
+  69     | 1e-5       | 7e-6      | 4e-5      | 1e-6     | 1e-6    | 3e-6    | $${\color{lightblue}8e-7}$$        | 0          | 2e-6
+  79     | 8e-6       | 2e-6      | 2e-5      | 1e-6     | 1e-6    | 7e-6    | $${\color{lightblue}8e-7}$$        | 0          | 3e-6 
 
 
 
