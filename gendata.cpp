@@ -20,6 +20,6 @@ void genBoards(int clues, int numBoards) {
 
 int main() {
 	srand((unsigned) time(NULL));  // seed random number generator
-	genBoards(79, 2);	
+	genBoards(9, 2);	
 	return 0;
 }
