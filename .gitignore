@@ -1,1 +1,9 @@
 build/
+.DS_Store
+.vscode/
+*.dSYM/
+
+# binaries from building the demos in place
+arraydemo
+bitdemo
+/gendata

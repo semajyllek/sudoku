@@ -1,17 +1,18 @@
 ### generating and solving sudoku tables
 
-- `sudokusolver.hpp`: solver built on [TinyBitSet](https://github.com/semajyllek/TinyBitSet). it fills the cell with the
-  fewest possible digits first, and places hidden singles (a digit that fits in only one cell of a row, column or box)
-  before guessing. it can also count solutions, so `hasUniqueSolution(puzzle)` checks a puzzle has exactly one answer
-- `arrayboard.hpp` (std::vector per cell) and `bitboard.hpp` (TinyBitSets, naked groups) are the original solvers.
-  both fill cells in row order and fall back on backtracking, giving up after 20 million tries
-- `tinybitset` is expected next to this repo, at `../tinybitset`, and needs C++20
+- `sudokusolver.hpp`: solver built on [TinyBitSet](https://github.com/semajyllek/TinyBitSet). it branches on the cell
+  with the fewest candidates and places hidden singles first. it can also count solutions:
+  `hasUniqueSolution(puzzle)` checks that a puzzle has exactly one
+- `arrayboard.hpp` and `bitboard.hpp`: the original solvers. both fill cells in row order and backtrack, giving up
+  after 20 million tries
+- `gendata.cpp`: generates the puzzles in `data/`
+- needs C++20 and `tinybitset` checked out next to this repo, at `../tinybitset`
 
 ```
 make test     # solver tests
 make bench    # sudokusolver timings and the uniqueness report
-make data     # regenerate data/ (same files every time)
-make all      # also builds build/bench_bitboard and build/bench_arrayboard (bitboard.hpp needs brew install libomp)
+make data     # regenerate data/ (same seed, same files)
+make all      # also builds the original solvers' benchmarks (bitboard.hpp needs brew install libomp)
 ```
 
 each benchmark binary takes `data [reps]`, `hard [name|all]` or `par [reps] [threads...]`.
@@ -19,41 +20,35 @@ each benchmark binary takes `data [reps]`, `hard [name|all]` or `par [reps] [thr
 
 ### results
 
-all times in seconds, Apple M4 Max, clang `-std=c++20 -O2`, on the puzzles in `data/` (1000 per clue count, each with
-exactly one solution, see below). every answer is checked against the rules and the clues, and timing includes each
-solver's setup.
+times in seconds. Apple M4 Max, clang `-std=c++20 -O2`, puzzles from `data/`. every answer is checked against the
+rules and the clues, and timing includes each solver's setup. all three solvers solve every puzzle.
 
 average time per board:
 
   clues | array | bitset | sudokusolver
   --- | --- | --- | ---
-  22 | 0.054 | 0.0069 | 0.000010
-  29 | 0.0011 | 0.000076 | 0.0000046
-  39 | 0.000035 | 0.000018 | 0.0000017
-  49 | 0.0000076 | 0.000011 | 0.00000076
-  59 | 0.0000041 | 0.0000076 | 0.00000046
-  69 | 0.0000024 | 0.0000052 | 0.00000029
-  79 | 0.0000012 | 0.0000033 | 0.00000014
+  22 | 0.054 | 0.0069 | 0.0000084
+  29 | 0.0011 | 0.000076 | 0.0000045
+  39 | 0.000035 | 0.000018 | 0.0000016
+  49 | 0.0000076 | 0.000011 | 0.00000073
+  59 | 0.0000041 | 0.0000076 | 0.00000039
+  69 | 0.0000024 | 0.0000052 | 0.00000024
+  79 | 0.0000012 | 0.0000033 | 0.00000015
 
 slowest board:
 
   clues | array | bitset | sudokusolver
   --- | --- | --- | ---
-  22 | 3.2 | 0.49 | 0.00011
-  29 | 0.067 | 0.0018 | 0.000014
-  39 | 0.00071 | 0.000041 | 0.000018
-  49 | 0.000034 | 0.000024 | 0.0000079
-  59 | 0.000015 | 0.000015 | 0.00000088
+  22 | 3.2 | 0.49 | 0.000068
+  29 | 0.067 | 0.0018 | 0.000019
+  39 | 0.00071 | 0.000041 | 0.0000042
+  49 | 0.000034 | 0.000024 | 0.0000020
+  59 | 0.000015 | 0.000015 | 0.00000079
   69 | 0.000016 | 0.000021 | 0.00000042
-  79 | 0.0000015 | 0.000016 | 0.00000021
+  79 | 0.0000015 | 0.000016 | 0.00000029
 
-all three solve every puzzle. (on the original 2023 data the two original solvers left up to 19 of 1000 boards
-unsolved at the lowest clue counts, when they hit their try limit.)
-
-multiprocessing, sudokusolver solving all 1000 boards of a file, split across threads (each thread has its own
-solver and takes the next board no other thread has claimed). a single board can't usefully be split this way, the
-speedup comes from solving different boards at the same time. it drops for the easier files, where starting threads
-costs about as much as the work:
+sudokusolver on all 1000 boards of a file, split across threads, one solver per thread. the speedup is smaller on
+easy files, where starting threads costs about as much as the solving:
 
   clues | 1 thread | 14 threads | speedup
   --- | --- | --- | ---
@@ -66,12 +61,11 @@ costs about as much as the work:
   79 | 0.00023 | 0.00017 | 1.4x
 
 
+### data
 
-### data:
-`data/` has 1000 puzzles for each clue count: 22, 29, 39, 49, 59, 69 and 79. every puzzle has exactly that many clues
-and exactly one solution, which is stored with it. they're made by `gendata.cpp` (`make data`), which fills a random
-complete grid and then blanks cells in random order, keeping each blank only if the puzzle still has one solution.
-it uses a fixed seed, so rerunning it produces the same files. the first puzzle in `board29__1000.txt`:
+`data/` has 1000 puzzles for each clue count: 22, 29, 39, 49, 59, 69 and 79. each has exactly that many clues and
+exactly one solution, stored with it. `gendata.cpp` fills a random complete grid, then blanks cells in random order,
+keeping a blank only if the solution stays unique. the first puzzle in `board29__1000.txt`:
 
 ```
 
@@ -99,21 +93,12 @@ Solved Board:
 
 ```
 
-there's no 9 or 19 clue file any more: a sudoku needs at least 17 clues to have only one solution, and random
-blanking usually gets stuck at 23 to 26 clues (only about 1 grid in 26 got down to 22). `data.zip` has the original 2023 data, which wasn't checked for this. none of its
-9, 19 or 29 clue boards had a unique solution, its stored solutions often didn't keep the puzzle's own clues, and
-its file names were the most clues a board could have rather than an exact count.
-
-Note this doesn't reflect difficulty, as this would be related to time for a particular algorithm to solve, and observationally
-is not **dependent** solely on the number of clues. see wikipedia/sudoku.
+a unique solution needs at least 17 clues, and random blanking rarely gets below 23, so 22 is the lowest file.
+clue count is only a rough guide to difficulty.
 
 
-### extension idea:
+### extension ideas
 
-- quantify difficulty by extracing a number of hand-crafted features and timing puzzle solutions and 
-  investigating feature/time covariance for possible high level information about crafting difficult sudoku puzzles 
-
-- implications for sudoku encryption algorithms... 
-
----
-
+- quantify difficulty: extract hand-crafted features, time solutions, and look at how features and time covary,
+  for insight into making hard puzzles
+- implications for sudoku encryption algorithms
