@@ -13,6 +13,7 @@ make test     # solver tests
 make bench    # sudokusolver timings and the uniqueness report
 make data     # regenerate data/ (same seed, same files)
 make watch    # replay the solver on a puzzle in the terminal, see below
+make sota     # compare with tdoku, jsolve and kudoku, see results
 make all      # also builds the original solvers' benchmarks (bitboard.hpp needs brew install libomp)
 ```
 
@@ -39,45 +40,43 @@ repo root so it can find `data/`.
 
 ### results
 
-times in seconds. Apple M4 Max, clang `-std=c++20 -O2`, puzzles from `data/`. every answer is checked against the
-rules and the clues, and timing includes each solver's setup. all three solvers solve every puzzle.
+compared with other solvers: seconds per puzzle, on tdoku's standard data sets, checking that each solution is
+unique (a limit of 2 solutions, as in tdoku's benchmarks). Apple M4 Max, clang `-O3 -march=native`. every solver
+solves every puzzle correctly. from `make sota`:
 
-average time per board:
+  data set | puzzles | sudokusolver | tdoku | jsolve | kudoku
+  --- | --- | --- | --- | --- | ---
+  17 clue | 49158 | 0.000016 | 0.0000028 | 0.0000029 | 0.000014
+  magictour top 1465 | 1465 | 0.000065 | 0.0000077 | 0.000012 | 0.000061
+  forum hardest 1106 | 375 | 0.00048 | 0.000072 | 0.00015 | 0.00054
+  forum hardest 1905 11+ | 48766 | 0.00027 | 0.000046 | 0.000089 | 0.00027
+  kaggle | 100000 | 0.0000016 | 0.00000092 | 0.0000015 | 0.0000073
 
-  clues | array | bitset | sudokusolver
-  --- | --- | --- | ---
-  22 | 0.054 | 0.0069 | 0.0000084
-  29 | 0.0011 | 0.000076 | 0.0000045
-  39 | 0.000035 | 0.000018 | 0.0000016
-  49 | 0.0000076 | 0.000011 | 0.00000073
-  59 | 0.0000041 | 0.0000076 | 0.00000039
-  69 | 0.0000024 | 0.0000052 | 0.00000024
-  79 | 0.0000012 | 0.0000033 | 0.00000015
+- [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver in its own benchmark of the fastest known
+  solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)
+- jsolve and kudoku are the fastest cell-based and exact-cover (dancing links style) solvers in tdoku's benchmarks
+- sudokusolver is about as fast as kudoku, and 3 to 5.5 times slower than jsolve on the hard sets. jsolve keeps each
+  cell's candidates between steps and uses locked candidates. sudokusolver recomputes candidates at every step
 
-slowest board:
+`make sota` needs tdoku checked out at `../tdoku`. on ARM, until the port is merged:
 
-  clues | array | bitset | sudokusolver
-  --- | --- | --- | ---
-  22 | 3.2 | 0.49 | 0.000068
-  29 | 0.067 | 0.0018 | 0.000019
-  39 | 0.00071 | 0.000041 | 0.0000042
-  49 | 0.000034 | 0.000024 | 0.0000020
-  59 | 0.000015 | 0.000015 | 0.00000079
-  69 | 0.000016 | 0.000021 | 0.00000042
-  79 | 0.0000015 | 0.000016 | 0.00000029
+```
+git clone -b arm-neon https://github.com/semajyllek/tdoku ../tdoku
+```
 
-sudokusolver on all 1000 boards of a file, split across threads, one solver per thread. the speedup is smaller on
-easy files, where starting threads costs about as much as the solving:
+sudokusolver on all 1000 boards of a file in `data/`, split across threads, one solver per thread
+(`build/bench_sudokusolver par`, clang `-O2`). the speedup is smaller on easy files, where starting threads costs
+about as much as the solving:
 
   clues | 1 thread | 14 threads | speedup
   --- | --- | --- | ---
-  22 | 0.0088 | 0.0010 | 8.7x
-  29 | 0.0049 | 0.00062 | 7.9x
-  39 | 0.0020 | 0.00034 | 5.8x
-  49 | 0.0010 | 0.00024 | 4.2x
-  59 | 0.00060 | 0.00022 | 2.7x
-  69 | 0.00043 | 0.00021 | 2.0x
-  79 | 0.00023 | 0.00017 | 1.4x
+  22 | 0.0089 | 0.00097 | 9.2x
+  29 | 0.0049 | 0.00060 | 8.1x
+  39 | 0.0019 | 0.00034 | 5.6x
+  49 | 0.00094 | 0.00026 | 3.6x
+  59 | 0.00065 | 0.00028 | 2.4x
+  69 | 0.00039 | 0.00022 | 1.8x
+  79 | 0.00024 | 0.00022 | 1.1x
 
 
 ### data
