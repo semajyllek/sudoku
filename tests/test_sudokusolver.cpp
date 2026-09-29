@@ -5,7 +5,8 @@ Solution counts are cross-checked against naiveCount below, a deliberately simpl
 counter: plain ints, row-major order, no TinyBitSet, no fewest-candidates, no hidden singles.
 */
 #include "../sudokusolver.hpp"
-#include "../bench/benchlib.hpp"
+#include "../puzzles.hpp"
+#include <cstdio>
 #include <cstring>
 #include <random>
 
@@ -51,15 +52,6 @@ int naiveCount(const int in[9][9], int limit) {
 		grid[cell] = digit;
 	}
 	return naiveCountFrom(grid, 0, limit);
-}
-
-
-Puzzle hardPuzzle(std::string const &name) {
-	for (auto const &p : hardPuzzles()) {
-		if (p.name == name) return p;
-	}
-	std::printf("no hard puzzle named %s\n", name.c_str());
-	std::exit(2);
 }
 
 
@@ -139,30 +131,50 @@ void testDeadlyRectangleHasTwoSolutions() {
 }
 
 
-// the 69/79-clue boards with extra random cells blanked give puzzles with 1 to hundreds of solutions
+// a data puzzle with extra random cells blanked, which usually leaves it with several solutions
+Puzzle withExtraBlanks(Puzzle p, std::mt19937 &rng) {
+	for (int blanks = 0; blanks < 25; blanks++) {
+		p.grid[rng() % 9][rng() % 9] = 0;
+	}
+	return p;
+}
+
+
+// exact count matches the naive counter, and solve() finds a valid solution exactly when one exists
+bool agreesWithNaiveCounter(SudokuSolver &solver, Puzzle const &p, std::string &mismatch) {
+	int out[9][9];
+	int mine = solver.countSolutions(p.grid, 5000);
+	int naive = naiveCount(p.grid, 5000);
+	bool solveAgrees = solver.solve(p.grid, out) == (mine > 0) && (mine == 0 || validSolution(p.grid, out));
+	if (mine == naive && solveAgrees) {
+		return true;
+	}
+	mismatch = p.name + ": " + std::to_string(mine) + " vs naive " + std::to_string(naive);
+	return false;
+}
+
+
+// the 69/79-clue puzzles with extra blanks give puzzles with 1 to hundreds of solutions
 void testCountsMatchNaiveCounter() {
 	SudokuSolver solver;
 	std::mt19937 rng(12345);
-	int out[9][9];
 	int compared = 0, withSeveral = 0, mismatches = 0;
 	std::string firstMismatch;
 	for (int clues : {69, 79}) {
-		for (Puzzle p : loadFile(dataPath(clues))) {
-			for (int blanks = 0; blanks < 25; blanks++) p.grid[rng() % 9][rng() % 9] = 0;
-			int mine = solver.countSolutions(p.grid, 5000);
-			int naive = naiveCount(p.grid, 5000);
-			bool solveAgrees = solver.solve(p.grid, out) == (mine > 0) && (mine == 0 || validSolution(p.grid, out));
-			if (mine != naive || !solveAgrees) {
+		for (Puzzle const &original : readPuzzleFile(dataPath(clues))) {
+			Puzzle p = withExtraBlanks(original, rng);
+			std::string mismatch;
+			if (!agreesWithNaiveCounter(solver, p, mismatch)) {
 				mismatches++;
-				if (firstMismatch.empty()) firstMismatch = p.name + ": " + std::to_string(mine) + " vs naive " + std::to_string(naive);
+				if (firstMismatch.empty()) firstMismatch = mismatch;
 			}
 			compared++;
-			withSeveral += mine > 1;
+			withSeveral += solver.countSolutions(p.grid) > 1;
 		}
 	}
-	check(compared > 0 && mismatches == 0,
-	      "counts match the naive counter on " + std::to_string(compared) + " puzzles, " + std::to_string(withSeveral) + " with several solutions",
-	      compared == 0 ? "no data found, run from the repo root" : firstMismatch);
+	std::string name = "counts match the naive counter on " + std::to_string(compared) + " puzzles, " +
+	                   std::to_string(withSeveral) + " with several solutions";
+	check(compared > 0 && mismatches == 0, name, compared == 0 ? "no data found, run from the repo root" : firstMismatch);
 }
 
 

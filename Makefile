@@ -7,7 +7,9 @@ SANITIZE = -g -fsanitize=undefined,address -fno-sanitize-recover=undefined
 BUILD = build
 
 SOLVER = sudokusolver.hpp ../tinybitset/tinybitset.h
-BENCHLIB = bench/benchlib.hpp
+PUZZLES = puzzles.hpp
+BENCHLIB = bench/benchlib.hpp $(PUZZLES)
+ORIGINAL = bench/originalsolver.hpp utils.hpp $(BENCHLIB)
 BENCHES = $(BUILD)/bench_sudokusolver $(BUILD)/bench_bitboard $(BUILD)/bench_arrayboard $(BUILD)/uniqueness
 
 .PHONY: all test bench data clean
@@ -29,7 +31,7 @@ data: $(BUILD)/gendata
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/test_sudokusolver: tests/test_sudokusolver.cpp $(SOLVER) $(BENCHLIB) | $(BUILD)
+$(BUILD)/test_sudokusolver: tests/test_sudokusolver.cpp $(SOLVER) $(PUZZLES) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(SANITIZE) $< -o $@
 
 $(BUILD)/bench_sudokusolver: bench/bench_sudokusolver.cpp $(SOLVER) $(BENCHLIB) | $(BUILD)
@@ -38,13 +40,13 @@ $(BUILD)/bench_sudokusolver: bench/bench_sudokusolver.cpp $(SOLVER) $(BENCHLIB) 
 $(BUILD)/uniqueness: bench/uniqueness.cpp $(SOLVER) $(BENCHLIB) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
-$(BUILD)/gendata: gendata.cpp $(SOLVER) | $(BUILD)
+$(BUILD)/gendata: gendata.cpp $(SOLVER) $(PUZZLES) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
-$(BUILD)/bench_bitboard: bench/bench_bitboard.cpp bitboard.hpp utils.hpp $(BENCHLIB) | $(BUILD)
+$(BUILD)/bench_bitboard: bench/bench_bitboard.cpp bitboard.hpp $(ORIGINAL) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(OPENMP) -o $@
 
-$(BUILD)/bench_arrayboard: bench/bench_arrayboard.cpp arrayboard.hpp utils.hpp $(BENCHLIB) | $(BUILD)
+$(BUILD)/bench_arrayboard: bench/bench_arrayboard.cpp arrayboard.hpp $(ORIGINAL) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 clean:

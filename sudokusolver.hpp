@@ -6,11 +6,15 @@ that fits in only one of its cells (a hidden single), in which case place that f
 
 The same search both solves (stop at the first solution) and counts solutions (stop at a limit),
 so checking a generated puzzle has exactly one answer is countSolutions(puzzle) == 1.
+
+Stopping at the limit is immediate: the search returns without undoing its placements, so the grid is left
+holding the solution it just found. That is how solve() gets its answer, with no copying during the search.
 */
 #pragma once
 #include "../tinybitset/tinybitset.h"
 #include <array>
 #include <optional>
+#include <span>
 #include <utility>
 
 using Digits = TinyBitSet<9>;
@@ -27,15 +31,20 @@ class SudokuSolver {
 		bool hasUniqueSolution(const int in[9][9]) { return countSolutions(in, 2) == 1; }
 
 	private:
-		// a cell to branch on (as its position in empties) and the digits to try there.
-		// no digits means a dead end
+		static constexpr Digits ALL{1, 2, 3, 4, 5, 6, 7, 8, 9};
+		static constexpr int NUM_UNITS = 27;  // units 0-8 are rows, 9-17 columns, 18-26 boxes
+
+		// a cell to branch on and the digits to try there. no digits means a dead end
 		struct Branch {
-			int slot;
+			int cell;
 			Digits digits;
 		};
 
-		static constexpr Digits ALL{1, 2, 3, 4, 5, 6, 7, 8, 9};
-		static constexpr int NUM_UNITS = 27;  // units 0-8 are rows, 9-17 columns, 18-26 boxes
+		// for each unit, the digits that fit in at least one / at least two of its unfilled cells
+		struct UnitTally {
+			Digits once[NUM_UNITS];
+			Digits twice[NUM_UNITS];
+		};
 
 		// the row, column and box each cell belongs to
 		static constexpr std::array<std::array<int, 3>, 81> UNITS_OF = [] {
@@ -49,27 +58,35 @@ class SudokuSolver {
 		// the 9 cells in each unit
 		static constexpr std::array<std::array<int, 9>, NUM_UNITS> CELLS_OF = [] {
 			std::array<std::array<int, 9>, NUM_UNITS> cells{};
-			std::array<int, NUM_UNITS> filled{};
+			std::array<int, NUM_UNITS> count{};
 			for (int cell = 0; cell < 81; cell++) {
 				for (int unit : UNITS_OF[cell]) {
-					cells[unit][filled[unit]++] = cell;
+					cells[unit][count[unit]++] = cell;
 				}
 			}
 			return cells;
 		}();
 
 		Digits used[NUM_UNITS];  // digits already placed in each unit
-		int grid[81] = {};
-		int empties[81] = {};    // empty cells; empties[0..k) are filled in during search at depth k
+		int grid[81] = {};  // 0 = empty. after a search that reached its limit, the last solution found
+
+		// the cells that were empty in the puzzle. during search, empties[0..filled) hold the cells filled so far,
+		// in the order they were filled, and empties[filled..numEmpty) the ones still empty
+		int empties[81] = {};
+		int slotOf[81] = {};     // empties[slotOf[cell]] == cell
 		int numEmpty = 0;
 
 		bool load(const int in[9][9]);
-		int search(int k, int limit);
+		int search(int filled, int limit);
+		std::span<const int> unfilled(int filled) const;
+		void moveToSlot(int cell, int slot);
 
-		Branch chooseBranch(int k) const;
-		Branch fewestCandidates(int k) const;
-		std::optional<Branch> hiddenSingle(int k) const;
-		int slotOf(int cell, int k) const;
+		Branch chooseBranch(int filled) const;
+		Branch fewestCandidates(int filled) const;
+		UnitTally tallyCandidates(int filled) const;
+		bool canPlaceAll(UnitTally const &tally, int unit) const;
+		std::optional<Branch> hiddenSingle(UnitTally const &tally, int unit) const;
+		int cellFor(int unit, int digit) const;
 
 		Digits candidates(int cell) const;
 		void place(int cell, int digit);
@@ -82,7 +99,7 @@ inline bool SudokuSolver::solve(const int in[9][9], int out[9][9]) {
 	if (!load(in) || search(0, 1) == 0) {
 		return false;
 	}
-	// search stops at the first solution without undoing it, so grid holds the answer
+	// the search stopped at its first solution, so grid still holds it
 	for (int cell = 0; cell < 81; cell++) {
 		out[cell / 9][cell % 9] = grid[cell];
 	}
@@ -100,6 +117,7 @@ inline bool SudokuSolver::load(const int in[9][9]) {
 	for (int cell = 0; cell < 81; cell++) {
 		int digit = in[cell / 9][cell % 9];
 		if (digit == 0) {
+			slotOf[cell] = numEmpty;
 			empties[numEmpty++] = cell;
 		} else if (candidates(cell).contains(digit)) {
 			place(cell, digit);
@@ -111,34 +129,53 @@ inline bool SudokuSolver::load(const int in[9][9]) {
 }
 
 
-// fills empties[k..], returning how many solutions it found (at most limit).
-// on reaching the limit it returns immediately, leaving the last solution in grid
-inline int SudokuSolver::search(int k, int limit) {
-	if (k == numEmpty) {
+
+// fills the unfilled cells, returning how many solutions it found (at most limit)
+inline int SudokuSolver::search(int filled, int limit) {
+	if (filled == numEmpty) {
 		return 1;
 	}
-	Branch branch = chooseBranch(k);
-	std::swap(empties[k], empties[branch.slot]);
-	int cell = empties[k];
+	Branch branch = chooseBranch(filled);
+	moveToSlot(branch.cell, filled);
 
 	int found = 0;
 	for (int digit : branch.digits) {
-		place(cell, digit);
-		found += search(k + 1, limit - found);
+		place(branch.cell, digit);
+		found += search(filled + 1, limit - found);
 		if (found == limit) {
-			return found;
+			return found;  // stop right here, leaving the solution in grid
 		}
-		unplace(cell, digit);
+		unplace(branch.cell, digit);
 	}
 	return found;
 }
 
 
+inline std::span<const int> SudokuSolver::unfilled(int filled) const {
+	return {empties + filled, empties + numEmpty};
+}
 
-inline SudokuSolver::Branch SudokuSolver::chooseBranch(int k) const {
-	Branch best = fewestCandidates(k);
-	if (best.digits.getSetSize() > 1) {
-		if (std::optional<Branch> forced = hiddenSingle(k)) {
+
+inline void SudokuSolver::moveToSlot(int cell, int slot) {
+	int other = empties[slot];
+	std::swap(empties[slot], empties[slotOf[cell]]);
+	std::swap(slotOf[cell], slotOf[other]);
+}
+
+
+
+// a hidden single (or a unit where some digit fits nowhere) beats any cell with 2+ candidates
+inline SudokuSolver::Branch SudokuSolver::chooseBranch(int filled) const {
+	Branch best = fewestCandidates(filled);
+	if (best.digits.getSetSize() <= 1) {
+		return best;
+	}
+	UnitTally tally = tallyCandidates(filled);
+	for (int unit = 0; unit < NUM_UNITS; unit++) {
+		if (!canPlaceAll(tally, unit)) {
+			return {unfilled(filled).front(), Digits()};  // dead end
+		}
+		if (std::optional<Branch> forced = hiddenSingle(tally, unit)) {
 			return *forced;
 		}
 	}
@@ -147,55 +184,60 @@ inline SudokuSolver::Branch SudokuSolver::chooseBranch(int k) const {
 
 
 // stops early at a cell with 0 or 1 candidates, since nothing can beat that
-inline SudokuSolver::Branch SudokuSolver::fewestCandidates(int k) const {
-	Branch best{k, candidates(empties[k])};
-	for (int slot = k + 1; slot < numEmpty && best.digits.getSetSize() > 1; slot++) {
-		Digits digits = candidates(empties[slot]);
+inline SudokuSolver::Branch SudokuSolver::fewestCandidates(int filled) const {
+	std::span<const int> cells = unfilled(filled);
+	Branch best{cells.front(), candidates(cells.front())};
+	for (int cell : cells.subspan(1)) {
+		if (best.digits.getSetSize() <= 1) {
+			break;
+		}
+		Digits digits = candidates(cell);
 		if (digits.getSetSize() < best.digits.getSetSize()) {
-			best = {slot, digits};
+			best = {cell, digits};
 		}
 	}
 	return best;
 }
 
 
-// a digit missing from a unit that fits in exactly one of its empty cells must go there.
-// returns a dead end if a missing digit fits nowhere, nothing if no unit has a hidden single
-inline std::optional<SudokuSolver::Branch> SudokuSolver::hiddenSingle(int k) const {
-	Digits once[NUM_UNITS], twice[NUM_UNITS];
-	for (int slot = k; slot < numEmpty; slot++) {
-		int cell = empties[slot];
+inline SudokuSolver::UnitTally SudokuSolver::tallyCandidates(int filled) const {
+	UnitTally tally;
+	for (int cell : unfilled(filled)) {
 		Digits digits = candidates(cell);
 		for (int unit : UNITS_OF[cell]) {
-			twice[unit] |= once[unit] & digits;
-			once[unit] |= digits;
+			tally.twice[unit] |= tally.once[unit] & digits;
+			tally.once[unit] |= digits;
 		}
 	}
-
-	for (int unit = 0; unit < NUM_UNITS; unit++) {
-		if ((used[unit] | once[unit]) != ALL) {
-			return Branch{k, Digits()};
-		}
-		Digits onlyOnce = once[unit] - twice[unit];
-		if (!onlyOnce.isempty()) {
-			int digit = *onlyOnce.begin();
-			for (int cell : CELLS_OF[unit]) {
-				if (grid[cell] == 0 && candidates(cell).contains(digit)) {
-					return Branch{slotOf(cell, k), Digits{digit}};
-				}
-			}
-		}
-	}
-	return std::nullopt;
+	return tally;
 }
 
 
-inline int SudokuSolver::slotOf(int cell, int k) const {
-	int slot = k;
-	while (empties[slot] != cell) {
-		slot++;
+// every digit is either already in the unit or fits in one of its unfilled cells
+inline bool SudokuSolver::canPlaceAll(UnitTally const &tally, int unit) const {
+	return (used[unit] | tally.once[unit]) == ALL;
+}
+
+
+// a digit that fits in exactly one unfilled cell of the unit must go there
+inline std::optional<SudokuSolver::Branch> SudokuSolver::hiddenSingle(UnitTally const &tally, int unit) const {
+	Digits onlyOnce = tally.once[unit] - tally.twice[unit];
+	if (onlyOnce.isempty()) {
+		return std::nullopt;
 	}
-	return slot;
+	int digit = *onlyOnce.begin();
+	return Branch{cellFor(unit, digit), Digits{digit}};
+}
+
+
+// the unfilled cell in the unit where digit fits. only called when there is exactly one
+inline int SudokuSolver::cellFor(int unit, int digit) const {
+	for (int cell : CELLS_OF[unit]) {
+		if (grid[cell] == 0 && candidates(cell).contains(digit)) {
+			return cell;
+		}
+	}
+	return -1;
 }
 
 
