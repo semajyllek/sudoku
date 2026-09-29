@@ -20,6 +20,15 @@ holding the solution it just found. That is how solve() gets its answer, with no
 using Digits = TinyBitSet<9>;
 
 
+// optional hook for watching a search, e.g. to visualize it: told about every digit the search places and removes
+class SearchObserver {
+	public:
+		virtual ~SearchObserver() = default;
+		virtual void placed(int cell, int digit, bool guessed) = 0;  // guessed: the cell had 2+ candidates
+		virtual void removed(int cell, int digit) = 0;
+};
+
+
 class SudokuSolver {
 	public:
 		// fills out with a solution. false if the clues conflict or there is no solution
@@ -29,6 +38,9 @@ class SudokuSolver {
 		int countSolutions(const int in[9][9], int limit = 2);
 
 		bool hasUniqueSolution(const int in[9][9]) { return countSolutions(in, 2) == 1; }
+
+		// report every search step to observer from now on. nullptr stops it
+		void watch(SearchObserver *observer) { this->observer = observer; }
 
 	private:
 		static constexpr Digits ALL{1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -76,8 +88,11 @@ class SudokuSolver {
 		int slotOf[81] = {};     // empties[slotOf[cell]] == cell
 		int numEmpty = 0;
 
+		SearchObserver *observer = nullptr;
+
 		bool load(const int in[9][9]);
-		int search(int filled, int limit);
+		int startSearch(int limit);
+		template <bool Watched> int search(int filled, int limit);
 		std::span<const int> unfilled(int filled) const;
 		void moveToSlot(int cell, int slot);
 
@@ -96,7 +111,7 @@ class SudokuSolver {
 
 
 inline bool SudokuSolver::solve(const int in[9][9], int out[9][9]) {
-	if (!load(in) || search(0, 1) == 0) {
+	if (!load(in) || startSearch(1) == 0) {
 		return false;
 	}
 	// the search stopped at its first solution, so grid still holds it
@@ -108,12 +123,14 @@ inline bool SudokuSolver::solve(const int in[9][9], int out[9][9]) {
 
 
 inline int SudokuSolver::countSolutions(const int in[9][9], int limit) {
-	return load(in) ? search(0, limit) : 0;
+	return load(in) ? startSearch(limit) : 0;
 }
 
 
 inline bool SudokuSolver::load(const int in[9][9]) {
+	SearchObserver *watching = observer;  // the reset below shouldn't stop the watching
 	*this = SudokuSolver();
+	observer = watching;
 	for (int cell = 0; cell < 81; cell++) {
 		int digit = in[cell / 9][cell % 9];
 		if (digit == 0) {
@@ -130,7 +147,14 @@ inline bool SudokuSolver::load(const int in[9][9]) {
 
 
 
+// two compiled versions of search, so the unwatched one has no observer code in it at all
+inline int SudokuSolver::startSearch(int limit) {
+	return observer ? search<true>(0, limit) : search<false>(0, limit);
+}
+
+
 // fills the unfilled cells, returning how many solutions it found (at most limit)
+template <bool Watched>
 inline int SudokuSolver::search(int filled, int limit) {
 	if (filled == numEmpty) {
 		return 1;
@@ -138,14 +162,17 @@ inline int SudokuSolver::search(int filled, int limit) {
 	Branch branch = chooseBranch(filled);
 	moveToSlot(branch.cell, filled);
 
+	[[maybe_unused]] bool guessing = branch.digits.getSetSize() > 1;
 	int found = 0;
 	for (int digit : branch.digits) {
 		place(branch.cell, digit);
-		found += search(filled + 1, limit - found);
+		if constexpr (Watched) observer->placed(branch.cell, digit, guessing);
+		found += search<Watched>(filled + 1, limit - found);
 		if (found == limit) {
 			return found;  // stop right here, leaving the solution in grid
 		}
 		unplace(branch.cell, digit);
+		if constexpr (Watched) observer->removed(branch.cell, digit);
 	}
 	return found;
 }

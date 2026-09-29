@@ -12,9 +12,9 @@ BENCHLIB = bench/benchlib.hpp $(PUZZLES)
 ORIGINAL = bench/originalsolver.hpp utils.hpp $(BENCHLIB)
 BENCHES = $(BUILD)/bench_sudokusolver $(BUILD)/bench_bitboard $(BUILD)/bench_arrayboard $(BUILD)/uniqueness
 
-.PHONY: all test bench data clean
+.PHONY: all test bench data watch clean
 
-all: $(BUILD)/test_sudokusolver $(BENCHES) $(BUILD)/gendata
+all: $(BUILD)/test_sudokusolver $(BENCHES) $(BUILD)/gendata $(BUILD)/watch
 
 test: $(BUILD)/test_sudokusolver
 	./$(BUILD)/test_sudokusolver
@@ -23,6 +23,10 @@ test: $(BUILD)/test_sudokusolver
 bench: $(BENCHES)
 	./$(BUILD)/bench_sudokusolver data
 	./$(BUILD)/uniqueness
+
+# replays the solver on a puzzle in the terminal. more options: see watch.cpp
+watch: $(BUILD)/watch
+	./$(BUILD)/watch
 
 # regenerates data/ (same seed, same files)
 data: $(BUILD)/gendata
@@ -38,6 +42,9 @@ $(BUILD)/bench_sudokusolver: bench/bench_sudokusolver.cpp $(SOLVER) $(BENCHLIB) 
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 $(BUILD)/uniqueness: bench/uniqueness.cpp $(SOLVER) $(BENCHLIB) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+$(BUILD)/watch: watch.cpp $(SOLVER) $(PUZZLES) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 $(BUILD)/gendata: gendata.cpp $(SOLVER) $(PUZZLES) | $(BUILD)

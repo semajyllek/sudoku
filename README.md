@@ -12,10 +12,29 @@
 make test     # solver tests
 make bench    # sudokusolver timings and the uniqueness report
 make data     # regenerate data/ (same seed, same files)
+make watch    # replay the solver on a puzzle in the terminal, see below
 make all      # also builds the original solvers' benchmarks (bitboard.hpp needs brew install libomp)
 ```
 
 each benchmark binary takes `data [reps]`, `hard [name|all]` or `par [reps] [threads...]`.
+
+
+### watching the solver
+
+`build/watch` records every step the solver takes on one puzzle, then replays it in the terminal.
+
+```
+./build/watch                     # first puzzle in data/board22__1000.txt
+./build/watch 29 5                # puzzle 5 from data/board29__1000.txt
+./build/watch inkala2012          # a named puzzle from puzzles.hpp
+./build/watch 8..........36......7..9.2...5...7.......457.....1...3...1....68..85...1..9....4..
+                                  # any 81-character puzzle, 0 or . for empty cells
+./build/watch inkala2012 -s 20    # replay over 20 seconds instead of 8
+```
+
+clues are bold, forced placements green, guesses yellow, and a removed digit flashes red when the solver backtracks.
+the last line gives whether the solution is unique and how long `solve()` takes without the replay. run it from the
+repo root so it can find `data/`.
 
 
 ### results
