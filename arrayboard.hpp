@@ -41,6 +41,7 @@ class ArrayBoard{
 		// debug helpers
 		void printBoard();
 		bool debugUtil(int rowIdx, int colIdx, int val);
+		int getValue(int rowIdx, int colIdx) const { return board[rowIdx][colIdx].value; }
 		void saveBoard(string filename, unsigned int mode=ios::out, string header="\nNew Board: \n");
 
 	

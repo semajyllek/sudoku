@@ -74,6 +74,7 @@ class BitSetBoard {
 		void printBoardPossibles();
 		void printBoard();
 		bool debugUtil(int rowIdx, int colIdx, int val);
+		int getValue(int rowIdx, int colIdx) const { return board[rowIdx][colIdx].value; }
 
 	
 	private:

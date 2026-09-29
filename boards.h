@@ -1,8 +1,7 @@
 
 
 
-std::string path9 = "data/board9__1000.txt";
-std::string path19 = "data/board19__1000.txt";
+std::string path22 = "data/board22__1000.txt";
 std::string path29 = "data/board29__1000.txt";
 std::string path39 = "data/board39__1000.txt";
 std::string path49 = "data/board49__1000.txt";
