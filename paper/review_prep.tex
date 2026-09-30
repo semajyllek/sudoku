@@ -150,4 +150,66 @@ guess strategies may exist that we could not see, and closed-source solvers coul
 \paragraph{Action for the paper.} Cite fastdoku and RKCR7 in the related work, with the limit-1 caveat for both and the
 mismatched baseline for RKCR7.
 
+
+\section*{Can you describe the whole program in plain terms?}
+
+\paragraph{What it's asked to do.} It gets a Sudoku grid with some cells filled in, and either finds a solution or
+counts solutions up to a limit. With a limit of 2 (the benchmark setting) it is really answering ``is there exactly
+one solution?'', so it cannot stop at the first solution: it has to rule out every other possibility too.
+
+\paragraph{1. How it remembers the puzzle.} For every empty cell the solver tracks which digits could still go there,
+the cell's \emph{candidates}. Instead of a list per cell, it stores the same information per digit.
+\begin{itemize}
+\item The grid is split into three horizontal strips of three rows each, called \emph{bands}.
+\item For each digit and each band, one 32-bit number records which of the band's 27 cells could still hold that
+  digit, one bit per cell.
+\item 9 digits $\times$ 3 bands = 27 numbers describe the whole puzzle.
+\item Checking or removing candidates is then just bit operations on these numbers, which a processor does very fast.
+\end{itemize}
+
+\paragraph{2. Setting up.} It starts with every digit possible everywhere. For each given clue it puts the clue's digit
+in its cell (removing every other digit from that cell) and removes that digit from the rest of the clue's row, column
+and box. If a clue's digit has already been ruled out of its cell, two clues clash and the puzzle has no solution.
+
+\paragraph{3. Deducing without guessing.} This is the core, repeated until nothing changes. For each digit in each band
+whose candidates changed, it does three things.
+\begin{itemize}
+\item \textbf{The band rule.} In the finished grid a digit appears once in each of the band's three rows and once in
+  each of its three boxes, so its three copies give each row its own box, like three people each taking a different one
+  of three seats. The solver looks at which row-and-box combinations still have the digit somewhere and asks which of
+  the six possible ways of seating rows in boxes are still available. If a row-and-box combination is not used by
+  \emph{any} available seating, the digit cannot go anywhere in that part of the row, and it is removed there. This
+  single check does the work of several named human techniques, and it is a table lookup, not a search: there are only
+  512 possible patterns, and the answers are precomputed.
+\item \textbf{The stack rule.} The same idea turned sideways. The grid also has three vertical strips of three columns,
+  called \emph{stacks}. Within a stack, the digit's three copies must use each of the stack's three columns once, and
+  one in each band, so they give each band its own column; any band-and-column combination that no available assignment
+  uses is removed. It only needs rechecking when the set of columns a band uses has changed.
+\item \textbf{Row singles.} If a row of the band has only one cell left where the digit can go, the digit must go
+  there: the solver places it and removes every other digit from that cell.
+\end{itemize}
+After those settle, it counts for every cell how many digits it still allows, for a whole band at once with a few bit
+operations per digit. A cell with \textbf{no} digits left means the current path is impossible (a dead end). A cell
+with \textbf{one} digit left is filled in (a \emph{naked single}), and step 3 repeats, since that may enable new
+deductions. Cells with exactly \textbf{two} digits left are noted for the next step. If every cell is down to one digit,
+the grid is solved and counted.
+
+\paragraph{4. Guessing when deduction runs out.} If cells remain open, it has to guess.
+\begin{itemize}
+\item It picks a cell with exactly two candidates, and among those the one whose row, column and box contain the most
+  still-open cells: a guess there affects the most of the puzzle and prunes the most.
+\item If no cell has two candidates, it picks a cell with as few candidates as possible.
+\item It copies the current state, places the first candidate in the copy, and goes back to step 3 with it. When that
+  branch is fully explored, it places the second candidate in the original state and explores that branch.
+\item Each branch either hits a dead end, finds a solution, or needs more guesses; the nested guesses form a tree.
+\end{itemize}
+
+\paragraph{5. Finishing.} It keeps counting solutions until it reaches the limit or has explored every branch. For a
+normal puzzle with one solution it has to explore the whole tree to prove there is no second one. It returns the
+count, plus the first solution it found.
+
+\paragraph{Why it is fast, in one sentence.} Each deduction is a handful of bit operations and table lookups on small
+numbers, and the choice of where to guess keeps the tree of guesses small: about 138 guesses per puzzle on the hardest
+test set, where JCZSolve, the similar solver it builds on, makes 363.
+
 \end{document}

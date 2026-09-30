@@ -13,16 +13,20 @@
 \node[font=\tiny,text=black,inner sep=0] at (3.900,3.250) {6};
 \node[font=\tiny,text=black,inner sep=0] at (4.400,2.750) {6};
 \node[font=\tiny,text=black,inner sep=0] at (0.400,2.250) {6};
-\node[font=\tiny\bfseries,text=violet,inner sep=0] at (0.900,2.250) {6};
-\draw[violet,thin] (0.830,2.180) -- (0.970,2.320);
-\node[font=\tiny\bfseries,text=violet,inner sep=0] at (1.400,2.250) {6};
-\draw[violet,thin] (1.330,2.180) -- (1.470,2.320);
+\fill[violet!80!magenta!18] (0.500,2.000) rectangle (1.000,2.500);
+\node[font=\tiny\bfseries,text=violet!80!magenta,inner sep=0] at (0.900,2.250) {6};
+\draw[violet!80!magenta,thin] (0.830,2.180) -- (0.970,2.320);
+\fill[violet!80!magenta!18] (1.000,2.000) rectangle (1.500,2.500);
+\node[font=\tiny\bfseries,text=violet!80!magenta,inner sep=0] at (1.400,2.250) {6};
+\draw[violet!80!magenta,thin] (1.330,2.180) -- (1.470,2.320);
 \node[font=\tiny,text=black,inner sep=0] at (2.900,2.250) {6};
 \node[font=\tiny,text=black,inner sep=0] at (0.400,1.750) {6};
-\node[font=\tiny\bfseries,text=violet,inner sep=0] at (0.900,1.750) {6};
-\draw[violet,thin] (0.830,1.680) -- (0.970,1.820);
-\node[font=\tiny\bfseries,text=violet,inner sep=0] at (1.400,1.750) {6};
-\draw[violet,thin] (1.330,1.680) -- (1.470,1.820);
+\fill[violet!80!magenta!18] (0.500,1.500) rectangle (1.000,2.000);
+\node[font=\tiny\bfseries,text=violet!80!magenta,inner sep=0] at (0.900,1.750) {6};
+\draw[violet!80!magenta,thin] (0.830,1.680) -- (0.970,1.820);
+\fill[violet!80!magenta!18] (1.000,1.500) rectangle (1.500,2.000);
+\node[font=\tiny\bfseries,text=violet!80!magenta,inner sep=0] at (1.400,1.750) {6};
+\draw[violet!80!magenta,thin] (1.330,1.680) -- (1.470,1.820);
 \node[font=\tiny,text=black,inner sep=0] at (2.900,1.750) {6};
 \node[font=\tiny,text=black,inner sep=0] at (2.400,1.250) {6};
 \node[font=\tiny,text=black,inner sep=0] at (0.900,0.750) {6};
@@ -108,7 +112,7 @@
 \end{tikzpicture}
 \\[0.5cm]
 {\small (c) the tables $B^{6,s}$ (bands $\times$ columns) for stacks 0, 1, 2, before}\\[3pt]
-$\begin{array}{c|ccc} & 0 & 1 & 2 \\ \hline \text{band }0 & 0 & \mathbf{1} & \mathbf{1} \\ \text{band }1 & \mathbf{1} & \textcolor{violet}{\mathbf{1}} & \textcolor{violet}{\mathbf{1}} \\ \text{band }2 & 0 & \mathbf{1} & \mathbf{1}\end{array}$\quad$\begin{array}{c|ccc} & 3 & 4 & 5 \\ \hline \text{band }0 & \mathbf{1} & 0 & 0 \\ \text{band }1 & 0 & 0 & \mathbf{1} \\ \text{band }2 & 0 & \mathbf{1} & 0\end{array}$\quad$\begin{array}{c|ccc} & 6 & 7 & 8 \\ \hline \text{band }0 & \mathbf{1} & \mathbf{1} & 0 \\ \text{band }1 & 0 & 0 & \mathbf{1} \\ \text{band }2 & \mathbf{1} & \mathbf{1} & 0\end{array}$
+$\begin{array}{c|ccc} & 0 & 1 & 2 \\ \hline \text{band }0 & 0 & \mathbf{1} & \mathbf{1} \\ \text{band }1 & \mathbf{1} & \textcolor{violet!80!magenta}{\mathbf{1}} & \textcolor{violet!80!magenta}{\mathbf{1}} \\ \text{band }2 & 0 & \mathbf{1} & \mathbf{1}\end{array}$\quad$\begin{array}{c|ccc} & 3 & 4 & 5 \\ \hline \text{band }0 & \mathbf{1} & 0 & 0 \\ \text{band }1 & 0 & 0 & \mathbf{1} \\ \text{band }2 & 0 & \mathbf{1} & 0\end{array}$\quad$\begin{array}{c|ccc} & 6 & 7 & 8 \\ \hline \text{band }0 & \mathbf{1} & \mathbf{1} & 0 \\ \text{band }1 & 0 & 0 & \mathbf{1} \\ \text{band }2 & \mathbf{1} & \mathbf{1} & 0\end{array}$
 \caption{\textsc{StackRule} (\cref{alg:stack}) for digit 6, the call made inside the band update of \cref{fig:alg-band}. (a), (b): digit 6's candidates over the whole grid; the violet ones are removed. (c): for each stack, a 1 where the band still has digit 6 in that column; entries on some perfect matching are bold, and violet entries are on none. In stack 0, bands 0 and 2 can only use columns 1 and 2, so between them they take both, and band 1 must use the remaining column: it loses columns 1 and 2. That removes 6 from 4 cells. In stacks 1 and 2 every entry is on a perfect matching, so nothing changes there.}
 \label{fig:alg-stack}
 \end{figure}

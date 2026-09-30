@@ -8,7 +8,7 @@ trace against the real call), propagates the root and makes the first branch. `m
 import json
 import sys
 
-REMOVED = {'band': 'red', 'single': 'orange!90!black', 'stack': 'violet', 'any': 'red'}
+REMOVED = {'band': 'red', 'single': 'orange!90!black', 'stack': 'violet!80!magenta', 'any': 'red'}
 
 
 def bits(x):
@@ -63,6 +63,12 @@ def grid(before, after, rows, cols, size, show, title, only_digit=None, removed_
             if highlight and cell in highlight:
                 out.append(f'\\fill[{highlight[cell]}] ({x0:.3f},{y0:.3f}) rectangle ({x0 + size:.3f},{y0 + size:.3f});')
             colour = removed_color.get(cell, 'red') if isinstance(removed_color, dict) else removed_color
+            gone = before['cands'][cell] & ~after['cands'][cell]
+            if only_digit is not None:
+                gone &= 1 << only_digit
+            if show == 'before' and gone:
+                # shade cells that lose a candidate, so the colour of the step shows at a glance
+                out.append(f'\\fill[{colour}!18] ({x0:.3f},{y0:.3f}) rectangle ({x0 + size:.3f},{y0 + size:.3f});')
             out += cell_marks(x0, y0, size, before, after, cell, only_digit, colour, show, focus)
             if scores and cell in scores:
                 out.append(f'\\node[font=\\tiny\\bfseries,text=teal,fill=white,anchor=north east,inner sep=0.6pt] at ({x0 + size:.3f},{y0 + size:.3f}) {{{scores[cell]}}};')
@@ -142,12 +148,12 @@ def fig_update_band(j):
            f'magictour puzzle {j["index"] + 1}. Small digits are candidates, large digits are solved cells, and digit '
            f'{d + 1} is blue. Struck-out candidates are the ones this call removes, coloured by the step that removes them: '
            f'\\textcolor{{red}}{{red}} by the band rule (line 3), \\textcolor{{orange!90!black}}{{orange}} by the row-single '
-           f'placement (lines 10--16), \\textcolor{{violet}}{{violet}} by the stack rule (line 7). The band rule removes '
+           f'placement (lines 10--16), \\textcolor{{violet!80!magenta}}{{violet}} by the stack rule (line 7); cells that lose a candidate are shaded in the same colour. The band rule removes '
            f'{d + 1} from row {rm_band[0][0]} at columns {", ".join(str(c) for _, c in rm_band)}, which leaves column {pcol} '
            f'as the only place for {d + 1} in row {pr}; so the row-single step places it there, shaded blue in (b), and '
            f'removes {" and ".join(str(k + 1) for k in rm_single[0][2])} from that cell. Because band {b}\'s set of columns '
            f'for {d + 1} changed, the stack rule runs and removes {d + 1} from {len(rm_stack)} cells of band {ob}, (c) and '
-           f'(d). In (e), the mask shrinks, \\texttt{{checked}} records the band-rule result, row {pr} leaves '
+           f'(d); these are in band {ob}, so they appear only in (c). In (e), the mask shrinks, \\texttt{{checked}} records the band-rule result, row {pr} leaves '
            f'\\texttt{{openRows}}, and the placed cell leaves \\texttt{{unsolved}} (its bit {pr * 9 + pcol}).}}')
     tex.append(cap)
     tex.append('\\label{fig:alg-band}\n\\end{figure}')
@@ -178,7 +184,7 @@ def fig_stack(j):
     s2, s3 = j['ub_after_rowsingles'], j['ub_after']
     size = 0.5
     tex = ['\\begin{figure}[p]\n\\centering']
-    tex.append(grid(s2, s3, range(9), range(9), size, 'before', f'(a) digit {d + 1}, before', only_digit=d, removed_color='violet'))
+    tex.append(grid(s2, s3, range(9), range(9), size, 'before', f'(a) digit {d + 1}, before', only_digit=d, removed_color='violet!80!magenta'))
     tex.append('\\hspace{1cm}')
     tex.append(grid(s2, s3, range(9), range(9), size, 'after', f'(b) digit {d + 1}, after', only_digit=d))
     tex.append('\\\\[0.5cm]')
@@ -191,7 +197,7 @@ def fig_stack(j):
             row = []
             for jj in range(3):
                 if m[band][jj] and not sup[band][jj]:
-                    row.append('\\textcolor{violet}{\\mathbf{1}}')
+                    row.append('\\textcolor{violet!80!magenta}{\\mathbf{1}}')
                 elif sup[band][jj]:
                     row.append('\\mathbf{1}')
                 else:
