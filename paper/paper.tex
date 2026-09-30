@@ -866,6 +866,8 @@ loop instead of being called as a function, which avoids the cost of a call.
 \State \Return \textbf{ok}
 \end{algorithmic}
 \end{algorithm}
+\input{figs/alg_band}
+
 
 Line 2 turns the 27-bit mask into the $3\times 3$ mini-row matrix $A$ with three 512-entry lookups, one per row. Line 3
 applies the band rule of \cref{sec:rules}: \textsc{PossibleCells}$[A]$ is the set of cells of mini-rows on some perfect
@@ -924,6 +926,8 @@ row 2, column 8, and those two cells are removed from the other eight digits.
 \State $S.\mathit{cells}[3d+b] \gets S.\mathit{cells}[3d+b] \,\&\, \mathrm{cols}(K_b)$ for $b = 0,1,2$
 \end{algorithmic}
 \end{algorithm}
+\input{figs/alg_stack}
+
 
 \Cref{alg:stack} builds, for each stack, the $3\times 3$ matrix of bands by the stack's three columns and keeps the
 pairs on some perfect matching, reusing \textsc{Matchable}. It is branch-free: three lookups and a few dozen shifts,
@@ -975,6 +979,8 @@ stacks whose columns changed produced the same tree but was 19\% slower, because
 \EndFunction
 \end{algorithmic}
 \end{algorithm}
+\input{figs/alg_propagate}
+
 
 \textsc{Update} (\cref{alg:propagate}) scans the 27 masks in digit order and runs \textsc{UpdateBand} on each one that
 changed, until a pass changes nothing. Changes made during a pass (by the stack rule, or by row singles clearing cells
@@ -1015,6 +1021,8 @@ more candidates, and \emph{open} with the two-candidate cells otherwise.
 \EndIf
 \end{algorithmic}
 \end{algorithm}
+\input{figs/alg_search}
+
 
 \Cref{alg:search} is a depth-first search that stops once \emph{limit} solutions are found; with limit 2 on a puzzle
 with one solution it explores the whole tree. The second child of a two-candidate branch reuses the parent's slot,
