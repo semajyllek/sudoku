@@ -1721,7 +1721,7 @@ time with \texttt{-march=x86-64-v3} (AVX2, no AVX-512): one binary, one instruct
 \centering
 \caption{Instructions per puzzle on forum hardest 1106, limit 2, for each build of each solver, and branch
 mispredictions per thousand instructions (MPKI). ARM counts are from the M4, x86 counts from the Emerald Rapids
-\texttt{c4}; the AVX2 build is the same binary on every x86 machine. The M4's mispredictions are not yet measured.}
+\texttt{c4}; the AVX2 build is the same binary on every x86 machine.}
 \label{tab:instructions}
 \small
 \begin{tabular}{lrrrrr}
@@ -1730,9 +1730,9 @@ mispredictions per thousand instructions (MPKI). ARM counts are from the M4, x86
 \cmidrule(lr){2-4} \cmidrule(lr){5-6}
 solver & ARM (NEON) & x86 AVX2 & x86 AVX-512 & M4 & x86 \\
 \midrule
-FastBandSolver & 594k & 692k & 666k & -- & 9.6--10.0 \\
-tdoku & 768k & 460k & 401k & -- & 4.2--4.8 \\
-jsolve & 1{,}520k & 1{,}641k & 1{,}637k & -- & 10.9--11.0 \\
+FastBandSolver & 594k & 692k & 666k & 10.1 & 9.6--10.0 \\
+tdoku & 768k & 460k & 401k & 1.9 & 4.2--4.8 \\
+jsolve & 1{,}520k & 1{,}641k & 1{,}637k & 10.8 & 10.9--11.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1792,10 +1792,12 @@ faster per cycle; the counters say only that they do, and by how much.
 processors and 3--10\% on Zen~4 and Zen~5, and changes FastBandSolver's by at most 7\%. On Intel the ratio falls from
 0.76--0.80 to 0.68--0.71, the measured speed ratio of \cref{tab:x86}.
 
-\paragraph{Branch mispredictions.} FastBandSolver mispredicts 6{,}600 branches per puzzle on the hardest set, 3.4 times
-tdoku's 1{,}900 (on the \texttt{c4}); its search branches on the contents of the grid at almost every step, where
+\paragraph{Branch mispredictions.} FastBandSolver mispredicts 6{,}600 branches per puzzle on the hardest set on the
+\texttt{c4}, 3.4 times tdoku's 1{,}900, and 6{,}000 on the M4, 4.0 times tdoku's 1{,}500; its search branches on the contents of the grid at almost every step, where
 tdoku's work is mostly branch-free vector operations. The counts do not change between builds, so they are a property
-of the algorithms. FastBandSolver's IPC is higher than tdoku's despite them.
+of the algorithms, and they are about the same on ARM and x86. On x86 FastBandSolver's IPC is higher than tdoku's
+despite them. Memory plays no part: every solver misses the L1 data cache fewer than 6 times per puzzle, on both
+machines, against about 300 thousand cycles.
 
 \paragraph{The M4.} On the M4 FastBandSolver needs fewer instructions than tdoku, 0.77 times as many, at 0.91 times its
 IPC, and so fewer cycles: 254 thousand against 299 thousand, a ratio of 1.18, which is its measured lead. It is also the

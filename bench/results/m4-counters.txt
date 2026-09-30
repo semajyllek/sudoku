@@ -1,0 +1,123 @@
+=== MACHINE
+Model name: Apple M4 Max
+=== COUNTERS build round 1
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 253738.3
+instructions           593817.9
+branches                53251.7
+branch-misses            6245.6
+l1d-read-misses             1.9
+seconds               5.720e-05
+GHz                       4.436
+check 7875
+=== COUNTERS build round 1
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                   7381.7
+instructions            17268.9
+branches                 1340.6
+branch-misses             158.1
+l1d-read-misses             2.4
+seconds               1.647e-06
+GHz                       4.483
+check 294948
+=== COUNTERS build round 1
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 298858.6
+instructions           767640.8
+branches                25412.2
+branch-misses            1458.5
+l1d-read-misses             0.4
+seconds               6.674e-05
+GHz                       4.478
+check 7875
+=== COUNTERS build round 1
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                  11836.3
+instructions            32400.0
+branches                 1431.7
+branch-misses              87.1
+l1d-read-misses             1.0
+seconds               2.648e-06
+GHz                       4.470
+check 294948
+=== COUNTERS build round 1
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 602611.4
+instructions          1519860.6
+branches               184115.4
+branch-misses           16647.7
+l1d-read-misses             1.0
+seconds               1.341e-04
+GHz                       4.495
+check 7875
+=== COUNTERS build round 1
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                  12106.1
+instructions            37119.1
+branches                 4631.0
+branch-misses             289.9
+l1d-read-misses             4.2
+seconds               2.731e-06
+GHz                       4.433
+check 294948
+=== COUNTERS build round 2
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 252528.1
+instructions           593635.6
+branches                48546.0
+branch-misses            5689.5
+l1d-read-misses             1.3
+seconds               5.724e-05
+GHz                       4.412
+check 7875
+=== COUNTERS build round 2
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                   7385.0
+instructions            17275.8
+branches                 1340.6
+branch-misses             158.2
+l1d-read-misses             2.2
+seconds               1.666e-06
+GHz                       4.434
+check 294948
+=== COUNTERS build round 2
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 298921.9
+instructions           767574.0
+branches                26057.4
+branch-misses            1494.1
+l1d-read-misses             0.4
+seconds               6.721e-05
+GHz                       4.448
+check 7875
+=== COUNTERS build round 2
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                  11835.3
+instructions            32406.5
+branches                 1431.7
+branch-misses              87.0
+l1d-read-misses             0.8
+seconds               2.668e-06
+GHz                       4.437
+check 294948
+=== COUNTERS build round 2
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cycles                 602845.1
+instructions          1520058.5
+branches               178777.5
+branch-misses           16149.4
+l1d-read-misses             0.9
+seconds               1.348e-04
+GHz                       4.473
+check 7875
+=== COUNTERS build round 2
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cycles                  12157.7
+instructions            37124.1
+branches                 4631.0
+branch-misses             290.0
+l1d-read-misses             3.6
+seconds               2.748e-06
+GHz                       4.423
+check 294948
+=== BENCH DONE

@@ -26,4 +26,4 @@ summarizes them; `python3 counters.py paper` prints the paper's table rows.
 - `gcp-c3d-zen4.txt` used the first clock estimate (an add-immediate chain). it is right on amd (zen 3 gave 3.46 and
   3.47 ghz with the old and new chains) but not on intel since golden cove, which folds those chains (about 20 ghz on
   c4); every intel log here uses the register-add chain
-- the m4's counts come from `bench/m4counters.cpp` through kperf (`sudo bash bench/m4counters.sh`)
+- `m4-counters.txt`: the m4, from `bench/m4counters.cpp` through kperf (`sudo bash bench/m4counters.sh`)
