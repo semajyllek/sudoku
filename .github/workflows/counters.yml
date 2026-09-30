@@ -1,4 +1,4 @@
-# hardware counters (bench/counters.cpp) on GitHub's x86 runners, if the virtual machine exposes them
+# bench/counters.cpp on GitHub's x86 runners: timings and clock speed (the runners expose no hardware counters)
 name: x86 counters
 
 on:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sample: [1, 2, 3, 4]
+        sample: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     defaults:
       run:

@@ -1,13 +1,16 @@
 /*
 Hardware counters for one solver on one data set: cycles, instructions, branches, branch mispredictions and L1 data
 cache read misses per puzzle, counted around the solve loop only (Linux, perf_event_open). Two passes over the data,
-one per group of counters, so no counter is multiplexed. Elsewhere it only times the loop; on macOS, /usr/bin/time -l
-around a run with reps and a run with 0 reps gives instructions and cycles.
+one per group of counters, so no counter is multiplexed. Where there are no counters it only times the loop; on macOS,
+/usr/bin/time -l around a run with reps and a run with 0 reps gives instructions and cycles. Before and after the
+loop it also estimates the clock speed from a chain of dependent adds, one cycle each, so time converts to cycles on
+machines without counters.
 
 usage: counters <fastband|tdoku|jsolve|kudoku> <data file> <reps> [limit]
 */
 #include "../fastbandsolver.hpp"
 #include "jsolve/JSolve.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -82,6 +85,22 @@ double secondsSince(std::chrono::steady_clock::time_point start) {
 }
 
 
+// clock speed in GHz: 2^27 iterations of 16 dependent one-cycle adds; the loop's own counter and branch run alongside
+double clockGHz() {
+	uint64_t x = 0;
+	constexpr long iterations = 1L << 27;
+	auto start = std::chrono::steady_clock::now();
+	for (long i = 0; i < iterations; i++) {
+#if defined(__x86_64__)
+		asm volatile(".rept 16\n\taddq $1, %0\n\t.endr" : "+r"(x));
+#elif defined(__aarch64__)
+		asm volatile(".rept 16\n\tadd %0, %0, #1\n\t.endr" : "+r"(x));
+#endif
+	}
+	return 16.0 * iterations / secondsSince(start) / 1e9;
+}
+
+
 int main(int argc, char **argv) {
 	if (argc != 4 && argc != 5) {
 		std::fprintf(stderr, "usage: %s <fastband|tdoku|jsolve|kudoku> <data file> <reps> [limit]\n", argv[0]);
@@ -107,9 +126,11 @@ int main(int argc, char **argv) {
 	};
 	run(reps > 0 ? 1 : 0);  // warm the caches and branch predictors
 	double solves = (double) puzzles.size() * reps;
+	double ghzBefore = clockGHz();
 	std::printf("%s %s limit %zu, per puzzle over %d reps of %zu puzzles\n", name.c_str(), argv[2], limit, reps,
 	            puzzles.size());
 
+	bool counted = false;
 #ifdef __linux__
 	for (auto const &group : GROUPS) {
 		std::vector<int> fds;
@@ -117,9 +138,13 @@ int main(int argc, char **argv) {
 			int fd = openCounter(c, fds.empty() ? -1 : fds[0]);
 			if (fd < 0) {
 				std::printf("cannot open %s: %s\n", c.name, std::strerror(errno));
-				return 1;
+				break;
 			}
 			fds.push_back(fd);
+		}
+		if (fds.size() < group.size()) {
+			for (int fd : fds) close(fd);
+			break;
 		}
 		ioctl(fds[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
 		auto start = std::chrono::steady_clock::now();
@@ -139,12 +164,15 @@ int main(int argc, char **argv) {
 		std::printf("%-16s %14.3e\n", "seconds", seconds / solves);
 		std::printf("%-16s %14.3f\n", "GHz", values[3] / seconds / 1e9);
 		for (int fd : fds) close(fd);
+		counted = true;
 	}
-#else
-	auto start = std::chrono::steady_clock::now();
-	run(reps);
-	std::printf("%-16s %14.3e\n", "seconds", secondsSince(start) / std::max(solves, 1.0));
 #endif
+	if (!counted) {
+		auto start = std::chrono::steady_clock::now();
+		run(reps);
+		std::printf("%-16s %14.3e\n", "seconds", secondsSince(start) / std::max(solves, 1.0));
+	}
+	std::printf("%-16s %14.3f %.3f\n", "clock GHz", ghzBefore, clockGHz());
 	std::printf("check %zu\n", sink);
 	return 0;
 }
