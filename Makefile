@@ -14,6 +14,8 @@ BENCHES = $(BUILD)/bench_sudokusolver $(BUILD)/bench_bitboard $(BUILD)/bench_arr
 
 # solution limit for make sota, parallel and throughput: 2 checks uniqueness (tdoku's standard), 1 finds one solution
 LIMIT ?= 2
+# runs per data set for make sota (the median is reported)
+REPS ?= 5
 
 # make sota: comparison of sudokusolver and fastbandsolver with tdoku, jsolve and kudoku, from a tdoku checkout (see the README)
 TDOKU ?= ../tdoku
@@ -44,7 +46,7 @@ data: $(BUILD)/gendata
 
 # takes a few minutes
 sota: $(BUILD)/sota/sota $(BUILD)/sota_data/unpacked
-	LIMIT=$(LIMIT) ./$(BUILD)/sota/sota 5 $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
+	LIMIT=$(LIMIT) ./$(BUILD)/sota/sota $(REPS) $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
 
 # one puzzle at a time on several threads: parallelbandsolver against fastbandsolver and tdoku
 parallel: $(BUILD)/sota/parallel $(BUILD)/sota_data/unpacked

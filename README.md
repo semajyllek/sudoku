@@ -18,7 +18,7 @@ make test     # solver tests
 make bench    # sudokusolver timings and the uniqueness report
 make data     # regenerate data/ (same seed, same files)
 make watch    # replay the solver on a puzzle in the terminal, see below
-make sota     # compare with tdoku, jsolve and kudoku, see results
+make sota     # compare with tdoku, jsolve and kudoku, see results (REPS=5 runs per set)
 make parallel # one puzzle on several threads: parallelbandsolver against fastbandsolver and tdoku (about 4 minutes)
 make throughput  # many puzzles on many cores, one process per core (about 30 minutes)
 make paper    # build/paper/paper.pdf, the write-up (needs latexmk)

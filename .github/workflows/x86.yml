@@ -1,0 +1,81 @@
+# make sota on GitHub's x86 runners: the paper's comparison with tdoku, jsolve and kudoku on x86.
+# the runners are shared VMs, so several jobs sample different hosts; compare ratios within a job, not across jobs
+name: x86 sota
+
+on:
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: runs per data set (median is reported)
+        default: "5"
+  push:
+    branches: [sota-comparison]
+    paths: [.github/workflows/x86.yml]
+
+jobs:
+  sota:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-22.04]
+        sample: [1, 2]
+    runs-on: ${{ matrix.runner }}
+    # explicit bash adds pipefail, so a failing make isn't hidden by tee
+    defaults:
+      run:
+        shell: bash
+    env:
+      CXX: clang++
+      CC: clang
+      REPS: ${{ github.event.inputs.reps || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sudoku
+      - uses: actions/checkout@v4
+        with:
+          repository: semajyllek/TinyBitSet
+          path: tinybitset
+      # native NEON port; on x86 it compiles to the same code as upstream tdoku
+      - uses: actions/checkout@v4
+        with:
+          repository: semajyllek/tdoku
+          ref: arm-neon
+          path: tdoku
+
+      - name: machine
+        run: |
+          lscpu | tee machine.txt
+          echo "avx flags: $(grep -o -w -E 'avx2|avx512[a-z]*' /proc/cpuinfo | sort -u | tr '\n' ' ')" | tee -a machine.txt
+          clang++ --version | head -1 | tee -a machine.txt
+
+      - name: test
+        working-directory: sudoku
+        run: make test
+
+      - name: sota, limit 2
+        working-directory: sudoku
+        run: make sota LIMIT=2 REPS=$REPS | tee ../sota_limit2.txt
+
+      - name: sota, limit 1
+        working-directory: sudoku
+        run: make sota LIMIT=1 REPS=$REPS | tee ../sota_limit1.txt
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            grep -E 'Model name|avx flags|clang' machine.txt
+            echo
+            cat sota_limit2.txt sota_limit1.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sota-${{ matrix.runner }}-${{ matrix.sample }}
+          path: |
+            machine.txt
+            sota_limit*.txt
