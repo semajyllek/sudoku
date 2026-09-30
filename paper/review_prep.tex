@@ -35,6 +35,9 @@ JCZSolve on M4 (measured) & 0.68$\times$ \\
 our engine with the three changes switched off, on M4 & 0.62$\times$ \\
 FastBandSolver on M4 & \textbf{1.17$\times$} \\
 FastBandSolver on Intel (projected) & 0.70$\times$ \\
+FastBandSolver on Intel Ice Lake / Sapphire Rapids (measured) & 0.67--0.71$\times$ \\
+FastBandSolver on AMD Zen~3 (measured) & 1.01--1.04$\times$ \\
+FastBandSolver on AMD Zen~4 (measured) & 0.93--0.94$\times$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -45,7 +48,10 @@ FastBandSolver on Intel (projected) & 0.70$\times$ \\
 \item \textbf{The algorithmic changes, about 1.7--1.9$\times$.} Peer-count branching, the stack rule and the
   fewest-candidates fallback take it from 0.62--0.68 to 1.17.
 \item \textbf{Neither alone is enough.} JCZSolve on the M4 still loses to tdoku (0.68$\times$), and the changes
-  projected onto Intel still lose (0.70$\times$). Both are needed.
+  measured on Intel still lose (0.67--0.71$\times$, as projected). Both are needed.
+\item \textbf{The platform is not only ARM against x86.} On AMD's Zen~3 FastBandSolver is level with tdoku on the
+  hardest set, so the favourable platforms include some x86 processors. Building tdoku without AVX-512 on Sapphire
+  Rapids makes it 12--13\% slower, which closes only part of the Intel gap (0.78$\times$ without it).
 \end{itemize}
 
 On the other data sets:
@@ -68,7 +74,8 @@ algorithmic changes add margin rather than create the win.
 
 \paragraph{Caveat.} The platform figure is the least robust. The Intel numbers are tdoku's published ones, from a
 different machine and benchmark program, each the best of over a dozen compiler configurations, so ``about
-1.7$\times$'' is a cross-machine estimate. The algorithmic figure was measured on the same machine with interleaved
+1.7$\times$'' is a cross-machine estimate. The x86 measurements (paper, Section 8.1) confirm its direction on Intel
+but come from rented virtual machines with unrecorded clock speeds. The algorithmic figure was measured on the same machine with interleaved
 runs.
 
 \paragraph{Summary for the paper.} The M4 closes most of the gap between scalar band solvers and tdoku, and the

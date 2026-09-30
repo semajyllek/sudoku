@@ -68,6 +68,9 @@ solves every puzzle correctly. from `make sota`:
 - jsolve and kudoku are the fastest cell-based and exact-cover (dancing links style) solvers in tdoku's benchmarks
 - fastbandsolver is 1.1 to 1.6 times faster than tdoku. `paper/` describes how, with an ablation and the approaches
   that didn't work
+- on x86 the result depends on the processor. measured on rented machines (`bench/results`, workflow in
+  `.github/workflows/x86.yml`), fastbandsolver / tdoku on the hard sets: amd zen 3 1.00 to 1.06, amd zen 4 0.92 to 0.96,
+  intel ice lake and sapphire rapids 0.67 to 0.73. it is level or faster on 17 clue everywhere but ice lake (0.98)
 - sudokusolver is about as fast as kudoku, and 3 to 5.5 times slower than jsolve on the hard sets. jsolve keeps each
   cell's candidates between steps and uses locked candidates. sudokusolver recomputes candidates at every step
 

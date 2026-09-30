@@ -1,0 +1,23 @@
+mkdir -p build/sota
+clang++ -std=c++17 -O3 -march=native -DNDEBUG -w -I../tdoku/include -c ../tdoku/src/solver_dpll_triad_simd.cc -o build/sota/tdoku.o
+mkdir -p build/sota
+clang++ -std=c++17 -O3 -march=native -w -c ../tdoku/src/util.cc -o build/sota/tdoku_util.o
+mkdir -p build/sota
+clang -O3 -march=native -w -c ../tdoku/other/jsolve/JSolve.c -o build/sota/jsolve.o
+mkdir -p build/sota
+clang -O3 -march=native -w -c ../tdoku/other/kudoku/kudoku.c -o build/sota/kudoku.o
+clang++ -std=c++20 -O2 -Wall -Wextra -O3 -march=native -I../tdoku/other bench/sota.cpp build/sota/tdoku.o build/sota/tdoku_util.o build/sota/jsolve.o build/sota/kudoku.o -o build/sota/sota
+mkdir -p build/sota_data
+unzip -oq ../tdoku/data.zip data/puzzles2_17_clue data/puzzles3_magictour_top1465 data/puzzles6_forum_hardest_1106 data/puzzles5_forum_hardest_1905_11+ data/puzzles0_kaggle -d build/sota_data
+touch build/sota_data/unpacked
+LIMIT=2 ./build/sota/sota 5 build/sota_data/data/puzzles2_17_clue build/sota_data/data/puzzles3_magictour_top1465 build/sota_data/data/puzzles6_forum_hardest_1106 build/sota_data/data/puzzles5_forum_hardest_1905_11+ build/sota_data/data/puzzles0_kaggle
+seconds per puzzle, limit 2, median of 5 runs
+
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku
+puzzles2_17_clue                     49158        0.000017       0.0000027       0.0000038       0.0000051        0.000023
+puzzles3_magictour_top1465            1465        0.000067        0.000010        0.000011        0.000021        0.000096
+puzzles6_forum_hardest_1106            375         0.00048        0.000094        0.000095         0.00024         0.00084
+puzzles5_forum_hardest_1905_11+      48766         0.00026        0.000059        0.000059         0.00014         0.00040
+puzzles0_kaggle                     100000       0.0000015       0.0000012       0.0000012       0.0000024        0.000012
+
+every solver solved every puzzle correctly

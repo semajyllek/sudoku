@@ -1,0 +1,43 @@
+=== MACHINE
+CPU(s):                                  4
+Model name:                              AMD EPYC 9B14
+Thread(s) per core:                      2
+avx flags: avx2 avx512bw avx512cd avx512dq avx512f avx512ifma avx512vbmi avx512vl
+Ubuntu clang version 18.1.3 (1ubuntu1)
+=== NATIVE round 1
+seconds per puzzle, limit 2, median of 5 runs
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku  tdoku/fastband
+puzzles2_17_clue                     49158       0.0000161      0.00000244      0.00000317      0.00000469       0.0000201           1.298
+puzzles3_magictour_top1465            1465       0.0000629      0.00000946      0.00000897       0.0000191       0.0000845           0.948
+puzzles6_forum_hardest_1106            375        0.000450       0.0000844       0.0000788        0.000219        0.000742           0.934
+puzzles5_forum_hardest_1905_11+      48766        0.000245       0.0000538       0.0000496        0.000132        0.000355           0.921
+puzzles0_kaggle                     100000      0.00000139      0.00000111      0.00000104      0.00000231       0.0000108           0.932
+every solver solved every puzzle correctly
+=== NOAVX512 round 1
+seconds per puzzle, limit 2, median of 5 runs
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku  tdoku/fastband
+puzzles2_17_clue                     49158       0.0000160      0.00000251      0.00000339      0.00000471       0.0000203           1.347
+puzzles3_magictour_top1465            1465       0.0000626      0.00000968      0.00000954       0.0000194       0.0000853           0.986
+puzzles6_forum_hardest_1106            375        0.000448       0.0000860       0.0000840        0.000223        0.000749           0.977
+puzzles5_forum_hardest_1905_11+      48766        0.000244       0.0000549       0.0000527        0.000134        0.000359           0.960
+puzzles0_kaggle                     100000      0.00000139      0.00000114      0.00000110      0.00000228       0.0000108           0.969
+every solver solved every puzzle correctly
+=== NATIVE round 2
+seconds per puzzle, limit 2, median of 5 runs
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku  tdoku/fastband
+puzzles2_17_clue                     49158       0.0000160      0.00000245      0.00000317      0.00000469       0.0000201           1.296
+puzzles3_magictour_top1465            1465       0.0000628      0.00000944      0.00000895       0.0000191       0.0000846           0.949
+puzzles6_forum_hardest_1106            375        0.000449       0.0000846       0.0000785        0.000220        0.000743           0.928
+puzzles5_forum_hardest_1905_11+      48766        0.000245       0.0000538       0.0000494        0.000132        0.000355           0.919
+puzzles0_kaggle                     100000      0.00000139      0.00000111      0.00000103      0.00000232       0.0000108           0.930
+every solver solved every puzzle correctly
+=== NOAVX512 round 2
+seconds per puzzle, limit 2, median of 5 runs
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku  tdoku/fastband
+puzzles2_17_clue                     49158       0.0000171      0.00000252      0.00000339      0.00000464       0.0000201           1.342
+puzzles3_magictour_top1465            1465       0.0000661      0.00000970      0.00000955       0.0000191       0.0000845           0.984
+puzzles6_forum_hardest_1106            375        0.000469       0.0000862       0.0000840        0.000220        0.000743           0.974
+puzzles5_forum_hardest_1905_11+      48766        0.000258       0.0000549       0.0000527        0.000133        0.000355           0.960
+puzzles0_kaggle                     100000      0.00000142      0.00000114      0.00000110      0.00000228       0.0000107           0.967
+every solver solved every puzzle correctly
+=== BENCH DONE

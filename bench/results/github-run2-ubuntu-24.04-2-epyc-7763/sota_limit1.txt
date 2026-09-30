@@ -1,0 +1,11 @@
+LIMIT=1 ./build/sota/sota 5 build/sota_data/data/puzzles2_17_clue build/sota_data/data/puzzles3_magictour_top1465 build/sota_data/data/puzzles6_forum_hardest_1106 build/sota_data/data/puzzles5_forum_hardest_1905_11+ build/sota_data/data/puzzles0_kaggle
+seconds per puzzle, limit 1, median of 5 runs
+
+data set                           puzzles    sudokusolver  fastbandsolver           tdoku          jsolve          kudoku  tdoku/fastband
+puzzles2_17_clue                     49158       0.0000142      0.00000259      0.00000369      0.00000479       0.0000138           1.427
+puzzles3_magictour_top1465            1465       0.0000404      0.00000681      0.00000715       0.0000131       0.0000485           1.050
+puzzles6_forum_hardest_1106            375        0.000221       0.0000447       0.0000512        0.000124        0.000427           1.146
+puzzles5_forum_hardest_1905_11+      48766        0.000134       0.0000316       0.0000317       0.0000752        0.000206           1.003
+puzzles0_kaggle                     100000      0.00000146      0.00000125      0.00000129      0.00000244      0.00000948           1.036
+
+every solver solved every puzzle correctly

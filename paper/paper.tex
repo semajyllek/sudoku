@@ -54,9 +54,10 @@ two-candidate cell with the most unsolved peers (the classic degree tie-break) i
 solution limit of 2) as in tdoku's benchmarks, FastBandSolver is 1.07--1.62$\times$ faster than native tdoku on all
 five of tdoku's standard data sets, including 1.17$\times$ on the 375 hardest forum puzzles; when only one solution is needed (a limit of
 1) it is also fastest on all five, by 1.07--1.61$\times$. An ablation attributes
-the gain mainly to branching: the search makes 138 guesses per puzzle on that set where JCZSolve makes 363. Compared with tdoku's published x86 results, scalar solvers gain much more from the M4 than tdoku does, and a
-projection suggests FastBandSolver would be about 0.7 times tdoku's speed on a recent Intel processor with AVX-512:
-the advantage is specific to Apple Silicon. On many cores, running one puzzle per core, FastBandSolver also has the
+the gain mainly to branching: the search makes 138 guesses per puzzle on that set where JCZSolve makes 363. On x86 the result depends on the processor. Measured on seven x86 cloud machines, FastBandSolver is level with or
+faster than tdoku on AMD Zen~3 (1.00--1.47$\times$), slightly slower on the hard sets on AMD Zen~4 (0.92--0.96$\times$),
+and about 0.7 times tdoku's speed on Intel Ice Lake and Sapphire Rapids. Building tdoku without AVX-512 explains only
+part of the Intel gap: most of it comes from the processor core itself. On many cores, running one puzzle per core, FastBandSolver also has the
 highest throughput at every core count; a parallel version that splits one puzzle's search between threads solves the
 hardest puzzles $2.1\times$ faster on 4 threads. We also report six approaches that did not beat tdoku, with measurements: template (pattern-overlay) search, several search-tree nodes in SIMD lanes, interleaving sibling branches, lookahead
 probing, triad rules, and joining band fillings.
@@ -74,10 +75,11 @@ each node, and where to branch.
 The current reference point is tdoku~\cite{dillon2019tdoku,dillon2019nerdsniped}. It encodes the grid in 128- or
 256-bit SIMD registers, reasons about \emph{triads} (the three cells of a row or column within a box) in both
 orientations, and in its author's benchmark it is well ahead of the other fast solvers on hard puzzles, though slower than two of them on the easiest ones (\cref{sec:related}). tdoku targets x86 SSE and AVX; to compare on ARM, we added native NEON support
-to it~\cite{kelly2026tdokuarm}. On Apple Silicon the picture changes (\cref{sec:arm}): scalar solvers run much faster than on x86, while tdoku does not, and the scalar band solver JCZSolve~\cite{jczsolve2016} already beats tdoku on the
+to it~\cite{kelly2026tdokuarm}. On Apple Silicon the picture changes (\cref{sec:arm}): scalar solvers run much faster than on tdoku's published Intel machine, while tdoku does not, and the scalar band solver JCZSolve~\cite{jczsolve2016} already beats tdoku on the
 17-clue set, but tdoku keeps its lead on the hardest puzzles.
 
-This paper asks whether a scalar solver can beat tdoku on the hard sets too, and answers yes. \Cref{sec:terms}
+This paper asks whether a scalar solver can beat tdoku on the hard sets too, and answers yes on the M4; on x86 the
+answer depends on the processor. \Cref{sec:terms}
 explains the background for readers new to the area: the parts of the grid, propagation and search, bitmasks, and
 perfect matchings. Our contributions:
 
@@ -89,13 +91,16 @@ perfect matchings. Our contributions:
   is Simonis's~\cite{simonis2005sudoku}; our contribution is applying it with one table lookup inside a band solver,
   only when a band's columns change. Together with the band rule, it makes box and column hidden singles redundant
   (\cref{prop:hidden}).
+\item \textbf{Measurements on x86} (\cref{sec:x86}): on seven cloud machines FastBandSolver is level with or
+  faster than tdoku on AMD Zen~3, slightly slower on Zen~4 and about 0.7 times its speed on recent Intel processors,
+  and a build of tdoku without AVX-512 shows how much of that its AVX-512 code accounts for.
 \item \textbf{Proofs} (\cref{sec:rules,sec:proofs}) that the rules are sound and that the solver counts solutions
   exactly, terminates, and stays within its fixed array of states.
 \item An \textbf{ablation}, switching each of our changes off in turn, (\cref{tab:ablation}) showing that branching, not propagation, carries most of the gain:
   picking the two-candidate cell with the most unsolved peers cuts the tree by 45\% at almost no cost, and a
   fewest-candidates fallback removes another 12\% of the time on the hardest set, even though it fires at only 1\%
   of branch nodes.
-\item \textbf{Multi-core results} (\cref{sec:multicore}): higher throughput than tdoku at every number of cores, an analysis showing that about 96\% of the search trees' work (counted in band updates) could run in parallel, and ParallelBandSolver, which halves the time
+\item \textbf{Multi-core results} (\cref{sec:multicore}): higher throughput than tdoku at every number of cores on the M4, an analysis showing that about 96\% of the search trees' work (counted in band updates) could run in parallel, and ParallelBandSolver, which halves the time
   of the hardest puzzles with 4 threads, with what limits it.
 \item \textbf{Negative results} with measurements (\cref{sec:negative}): complete per-digit template inference,
   running search-tree nodes in SIMD lanes, lookahead, triad rules, and band decomposition all fail to beat tdoku
@@ -1367,8 +1372,8 @@ instructions.
 \paragraph{The solvers that needed no porting.} FastBandSolver, JCZSolve, jsolve and kudoku are plain C or C++ with
 no SIMD intrinsics. They use 32- or 64-bit integer operations, small lookup tables, and, in FastBandSolver's case,
 \texttt{std::popcount}, which compiles to a hardware bit-count on both families. We built them unchanged with Apple
-clang and \texttt{-O3 -march=native}. The same source files build on x86; we did not have an x86 machine to measure
-them on.
+clang and \texttt{-O3 -march=native}. The same source files build unchanged on x86, where we measure them in
+\cref{sec:x86}.
 
 \paragraph{Porting tdoku.} tdoku is written against x86 intrinsics and did not build on ARM: its SIMD header includes
 the x86-only \texttt{immintrin.h}. All of its SIMD code goes through two small vector classes: \texttt{Bitvec08x16},
@@ -1546,8 +1551,8 @@ kaggle & 100000 & \textbf{\num{8.63e-7}} & \num{9.23e-7} & \num{1.13e-6} & \num{
 \end{tabular}
 \end{table}
 
-\paragraph{ARM compared with published x86 results.} We could not run the solvers on x86 ourselves, but tdoku's
-repository publishes results for the same data sets on several x86 machines. \Cref{tab:x86} compares its results for
+\paragraph{ARM compared with published x86 results.} Before measuring on x86 ourselves (\cref{sec:x86}), we
+compared with tdoku's repository, which publishes results for the same data sets on several x86 machines. \Cref{tab:published} compares its results for
 an Intel Core i7-1065G7 (a 2019 laptop processor with AVX-512, the machine our pull request compares against)
 with ours. Two patterns stand out. The scalar solvers run 1.3--1.7 times faster on the M4 Max than on the Intel
 processor, while tdoku runs 8--14\% slower. As a result tdoku's lead over JCZSolve, the scalar solver closest to ours,
@@ -1563,7 +1568,7 @@ optimization, while ours use one compiler. As a check on the harness, tdoku's ow
 per cell). Left: how much faster tdoku is than JCZSolve on each machine. Middle: speed on the M4 divided by speed on the
 Intel processor. Right: FastBandSolver's measured speedup over tdoku on the M4, and a projection for the Intel
 processor assuming FastBandSolver gains from the M4 as JCZSolve does.}
-\label{tab:x86}
+\label{tab:published}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lrrrrrrrr}
@@ -1583,10 +1588,116 @@ forum hardest 1106 & 2.45 & 1.47 & 0.88 & 1.46 & 1.52 & 1.39 & 1.17 & 0.70 \\
 
 The last column shows what this implies. FastBandSolver's engine is JCZSolve's design with a smaller search tree, so
 its speed should depend on the processor much as JCZSolve's does. If it does, FastBandSolver would be about 0.7 times
-tdoku's speed on the hard sets on that Intel processor, and about even on 17-clue: its advantage is a property of the
-M4, not a general one. The smaller search tree would carry over, since it does not depend on the machine, but on a
-processor where tdoku's wide SIMD pays off, it is not enough to make up the difference. Measuring FastBandSolver on
-x86 is the most important piece of follow-up work.
+tdoku's speed on the hard sets on that Intel processor, and about even on 17-clue. The measurements of
+\cref{sec:x86} bear this out on Intel processors of the same and the following generation.
+
+\subsection{Measured on x86}
+\label{sec:x86}
+
+We ran \texttt{make sota} on x86 machines rented by the hour: GitHub's hosted runners, which are shared virtual
+machines, and Google Cloud spot virtual machines, each with 4 virtual CPUs (two cores with two hardware threads each).
+All ran Ubuntu, built every solver with clang and \texttt{-O3 -march=native}, and took the median of 5 interleaved
+runs. On every machine every solver solved every puzzle correctly, and FastBandSolver's tests passed. We did not choose
+the GitHub runners' processors: two runs of four jobs landed on three processor models. JCZSolve is left out, as in
+\texttt{make sota}. The raw output, and the script that builds these tables from it, are in \texttt{bench/results}.
+Rented virtual machines are noisier than a dedicated one, but the two jobs on the same processor model with different
+compilers agree to within 0.05 in every ratio, and repeated runs on one machine to within 0.01.
+
+\begin{table}[t]
+\centering
+\caption{FastBandSolver's speed relative to tdoku (tdoku's time divided by FastBandSolver's) on x86 machines,
+limit 2 except the last column, with the M4 Max for comparison; above 1, FastBandSolver is faster. The vector column
+gives the widest extensions tdoku's build could use. Each row is one run of \texttt{make sota} (median of 5
+interleaved runs); the two Zen~3 rows are GitHub jobs with different compilers. The second Zen~4 machine ran limit 2
+only.}
+\label{tab:x86}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{llrrrrrr}
+\toprule
+& & \multicolumn{5}{c}{limit 2} & limit 1 \\
+\cmidrule(lr){3-7} \cmidrule(lr){8-8}
+processor & vector & 17 clue & magictour & 1106 & 1905 & kaggle & 1106 \\
+\midrule
+Apple M4 Max & NEON & 1.62 & 1.20 & 1.17 & 1.17 & 1.07 & 1.36 \\
+\midrule
+AMD EPYC 7763 (Zen 3), clang 14 & AVX2 & 1.47 & 1.06 & 1.04 & 1.03 & 1.06 & 1.18 \\
+AMD EPYC 7763 (Zen 3), clang 18 & AVX2 & 1.42 & 1.03 & 1.01 & 1.00 & 1.04 & 1.15 \\
+AMD EPYC 9V74 (Zen 4) & AVX-512 & 1.30 & 0.96 & 0.94 & 0.93 & 0.93 & 1.08 \\
+AMD EPYC 9B14 (Zen 4) & AVX-512 & 1.30 & 0.95 & 0.93 & 0.92 & 0.94 & -- \\
+Intel Xeon 8370C (Ice Lake) & AVX-512 & 1.00 & 0.71 & 0.69 & 0.68 & 0.74 & 0.80 \\
+Intel Xeon (Ice Lake) & AVX-512 & 0.98 & 0.69 & 0.67 & 0.67 & 0.74 & 0.77 \\
+Intel Xeon 8481C (Sapphire Rapids) & AVX-512 & 1.05 & 0.73 & 0.71 & 0.70 & 0.80 & 0.82 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Seconds per puzzle on forum hardest 1106, limit 2, on the machines of \cref{tab:x86}. Clock speeds differ
+between the machines and were not recorded, so comparisons between rows are rough.}
+\label{tab:x86times}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+processor & FastBandSolver & tdoku & jsolve & kudoku \\
+\midrule
+Apple M4 Max & \num{6.21e-5} & \num{7.27e-5} & \num{1.49e-4} & \num{5.62e-4} \\
+\midrule
+AMD EPYC 7763 (Zen 3), clang 14 & \num{9.57e-05} & \num{9.96e-05} & \num{2.40e-04} & \num{8.78e-04} \\
+AMD EPYC 7763 (Zen 3), clang 18 & \num{9.41e-05} & \num{9.46e-05} & \num{2.42e-04} & \num{8.37e-04} \\
+AMD EPYC 9V74 (Zen 4) & \num{7.78e-05} & \num{7.29e-05} & \num{2.04e-04} & \num{6.91e-04} \\
+AMD EPYC 9B14 (Zen 4) & \num{8.44e-05} & \num{7.88e-05} & \num{2.19e-04} & \num{7.42e-04} \\
+Intel Xeon 8370C (Ice Lake) & \num{1.01e-04} & \num{6.93e-05} & \num{2.68e-04} & \num{9.44e-04} \\
+Intel Xeon (Ice Lake) & \num{1.04e-04} & \num{6.96e-05} & \num{2.63e-04} & \num{9.33e-04} \\
+Intel Xeon 8481C (Sapphire Rapids) & \num{1.10e-04} & \num{7.76e-05} & \num{2.79e-04} & \num{1.02e-03} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:x86} gives the results, and the processor decides the outcome. On AMD's Zen~3, which has AVX2 but not
+AVX-512, FastBandSolver is level with tdoku on the hard sets at limit 2 (1.00--1.06$\times$), 1.15--1.18$\times$
+faster on the hardest set at limit 1, and 1.42--1.47$\times$ faster on 17-clue. On Zen~4 it is 4--8\% slower on the
+hard sets at limit 2, but still faster on 17-clue, and at limit 1 on the hardest set. On Intel's Ice Lake and Sapphire
+Rapids it runs at 0.67--0.73 times tdoku's speed on the hard sets and about level on 17-clue; the projection from
+published results above (0.70 on the hardest set) was close.
+
+\begin{table}[t]
+\centering
+\caption{tdoku with and without AVX-512 on the same machine: built with \texttt{-march=native} and with
+\texttt{-march=native -mno-avx512f}, limit 2, two rounds of each, alternating, averaged. The slowdown is tdoku's time
+without AVX-512 divided by its time with it, over the five data sets; the ratios are FastBandSolver's speed relative
+to tdoku on the three hard sets (magictour, 1106, 1905). FastBandSolver's own time changes by less than 3\%.}
+\label{tab:avx512}
+\small
+\begin{tabular}{lrrr}
+\toprule
+& tdoku slowdown & \multicolumn{2}{c}{FastBandSolver / tdoku} \\
+\cmidrule(lr){3-4}
+processor & without AVX-512 & with AVX-512 & without \\
+\midrule
+Intel Xeon 8481C (Sapphire Rapids) & 1.12--1.13 & 0.70--0.73 & 0.78--0.81 \\
+AMD EPYC 9B14 (Zen 4) & 1.06--1.07 & 0.92--0.95 & 0.96--0.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{How much is AVX-512?} tdoku never uses 512-bit registers. Its vectors are 128 and 256 bits wide, but when
+the compiler targets AVX-512 it uses the newer instructions on those widths: three-input logic, comparisons into mask
+registers, and a vector bit count (\texttt{AVX512VL}, \texttt{AVX512BW} and \texttt{AVX512VPOPCNTDQ}). To measure what
+they are worth, we built tdoku with and without them on the same machine (\cref{tab:avx512}; an Ice Lake spot machine
+was reclaimed before it finished). Without AVX-512, tdoku is 12--13\% slower on Sapphire Rapids and 6--7\% slower on
+Zen~4. That is only part of the gap: without AVX-512, FastBandSolver still reaches only 0.78--0.81 times tdoku's speed
+on the hard sets on Sapphire Rapids, against 1.00--1.06 on Zen~3, which also lacks AVX-512.
+
+The rest comes from the processor cores. Comparing absolute times across machines is rough, since their clock speeds
+differ, but the direction is clear: on the hardest set (\cref{tab:x86times}) tdoku is 1.2--1.4 times faster on the
+Intel machines than on Zen~3, while FastBandSolver, jsolve and kudoku are 6--22\% slower there. The scalar
+solvers are chains of dependent table lookups and data-dependent branches; tdoku is mostly independent vector
+operations. On these Intel cores the second kind of code does relatively better. We did not measure branch
+mispredictions, cache misses or clock speeds on x86, so which features of the cores are responsible remains open.
+What the measurements do show is that there is no single ranking across machines: whether a scalar band solver with
+a small search tree beats tdoku's SIMD propagation depends on the processor.
 
 \section{Using more than one core}
 \label{sec:multicore}
@@ -1648,8 +1759,8 @@ $1.13\times$ and $1.19\times$ at every number of processes. Scaling is close to 
 grows $9.8\times$ for FastBandSolver and $9.7\times$ for tdoku. Beyond ten, the four efficiency cores add little and the
 results get noisier. A first version gave each process a contiguous block of puzzles instead; hard puzzles cluster in
 the files, so some processes had much more work than others, and FastBandSolver's lead on the hardest set appeared to
-fall to $1.03\times$ at 10 processes. The throughput comparison inherits the platform question of \cref{sec:arm}: on x86,
-where the projection puts FastBandSolver behind tdoku on one core, it would presumably be behind on many cores too. In a local run, JCZSolve trailed
+fall to $1.03\times$ at 10 processes. The throughput comparison inherits the platform question of \cref{sec:x86}: we measured it only on the M4, and on
+the Intel processors, where FastBandSolver is behind tdoku on one core, it would presumably be behind on many cores too. In a local run, JCZSolve trailed
 both solvers at every process count, as it does on one core.
 
 \begin{table}[t]
@@ -1867,27 +1978,34 @@ for the middle band), so the join alone is millions of pairs.
 
 \section{Discussion}
 
-The result depends on the machine (\cref{tab:x86}). On the M4 Max, scalar solvers with small, cache-resident tables
-run 1.3--1.7 times faster than on a recent Intel processor, while tdoku runs slower, partly because NEON registers are
-128 bits wide, so tdoku's 256-bit vectors become pairs of 128-bit operations, as on x86 without AVX2. All three solvers in \cref{tab:counters} run at an IPC between 2.1 and 2.6, and their
-times follow their instruction counts and tree sizes. In that regime cheap choices of where to branch pay off more
-than stronger propagation.
+The result depends on the machine (\cref{tab:x86}). FastBandSolver is the fastest solver on the M4 and level with
+or faster than tdoku on AMD's Zen~3; tdoku is slightly faster on the hard sets on Zen~4 and clearly faster on Intel's
+Ice Lake and Sapphire Rapids. Vector width does not explain this. Zen~3 runs tdoku's 256-bit vectors natively and
+FastBandSolver still keeps level there, and the AVX-512 instructions tdoku uses on Intel account for only part of its
+lead (\cref{tab:avx512}). What differs is how each processor's cores run the two kinds of code. On the M4, all three
+solvers in \cref{tab:counters} run at an IPC between 2.1 and 2.6, their times follow their instruction counts and tree
+sizes, and cheap choices of where to branch pay off more than stronger propagation. On the Intel cores tdoku's
+propagation runs relatively faster, and its smaller tree wins.
 
-\paragraph{Limitations.} All measurements are from one machine and one compiler. We have not measured FastBandSolver on
-x86, where tdoku can use AVX2 or AVX-512 and was designed to run; the projection of \cref{tab:x86} suggests it would
-be slower than tdoku there on all but the 17-clue set. The data sets are those of tdoku's benchmark, and the forum-hardest sets are selected for difficulty
-under human techniques, not under search. Guess counts are not directly comparable across solvers that branch on
-different objects, which is why we compare times.
+\paragraph{Limitations.} The M4 measurements are from one machine and one compiler. The x86 measurements are from
+rented virtual machines, one run of \texttt{make sota} per machine, with clock speeds we did not record, and we measured
+neither throughput nor ParallelBandSolver there, nor hardware counters. They include no x86 desktop or laptop
+processor, and the AVX-512 experiment covers two processors. The data sets are those of tdoku's benchmark, and the
+forum-hardest sets are selected for difficulty under human techniques, not under search. Guess counts are not directly
+comparable across solvers that branch on different objects, which is why we compare times.
 
 \section{Conclusion}
 
-A scalar band solver with a matching-based stack rule, peer-count branching and a fewest-candidates fallback is faster than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$\times$ when checking uniqueness and by
-1.07--1.61$\times$ when finding one solution. Branching carries most of the
-gain. The advantage depends on the processor: on the M4 scalar code gains more than tdoku's SIMD code does, and a
-projection from published results puts FastBandSolver at about 0.7 times tdoku's speed on a recent Intel processor
-with AVX-512. Measuring it on x86 is the next step. On many cores it keeps the
-highest throughput, and splitting one puzzle's search between 4 threads halves the time of the hardest puzzles, far
-below what the trees would allow, because moving work between cores costs about as much as the work. The code and the benchmark are in the repository, and \texttt{make sota} reproduces \cref{tab:sota}.
+A scalar band solver with a matching-based stack rule, peer-count branching and a fewest-candidates fallback is faster
+than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$\times$ when checking uniqueness and by
+1.07--1.61$\times$ when finding one solution. Branching carries most of the gain. The advantage depends on the
+processor: on AMD's Zen~3 FastBandSolver is level with tdoku on the hard sets and faster elsewhere, on Zen~4 it is
+slightly slower on the hard sets, and on recent Intel processors it runs at about 0.7 times tdoku's speed, as a
+projection from tdoku's published results predicted. AVX-512 accounts for only part of that gap; the rest comes from
+the cores. On many cores it keeps the highest throughput on the M4, and splitting one puzzle's search between 4
+threads halves the time of the hardest puzzles, far below what the trees would allow, because moving work between
+cores costs about as much as the work. The code and the benchmark are in the repository, \texttt{make sota}
+reproduces \cref{tab:sota}, and \texttt{bench/results} holds the x86 runs.
 
 \paragraph{Acknowledgments.} FastBandSolver's representation follows zhouyundong's band solver and its implementations
 in JCZSolve and rust\_sudoku; the benchmark harness and data sets are Tom Dillon's. This work was done depending heavily on Anthropic's LLM harness Claude (Claude Code), using the model Claude Opus~5.5 with occasional advisory support from Claude Fable, including in theorizing, experimentation, and writeup.
