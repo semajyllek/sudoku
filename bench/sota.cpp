@@ -1,7 +1,7 @@
 /*
-Compares sudokusolver with tdoku, jsolve and kudoku on tdoku's standard data sets.
+Compares sudokusolver and fastbandsolver with tdoku, jsolve and kudoku on tdoku's standard data sets.
 
-All four run through tdoku's solver interface, with a limit of 2 solutions (so each also checks the solution is
+All five run through tdoku's solver interface, with a limit of 2 solutions (so each also checks the solution is
 unique), as in tdoku's published benchmarks. Before timing, every solver must solve every puzzle with a valid
 solution and agree with sudokusolver on how many solutions it has.
 
@@ -10,6 +10,7 @@ Built by `make sota`, which needs a tdoku checkout at ../tdoku (see the README).
 usage: sota <reps> <data file>...
 */
 #include "../sudokusolver.hpp"
+#include "../fastbandsolver.hpp"
 #include "jsolve/JSolve.h"
 #include <algorithm>
 #include <chrono>
@@ -56,6 +57,29 @@ extern "C" size_t SudokuSolverAdapter(const char *puzzle, size_t limit, uint32_t
 	return 1;
 }
 
+extern "C" size_t FastBandSolverAdapter(const char *puzzle, size_t limit, uint32_t, char *solution, size_t *guesses) {
+	static FastBandSolver solver;
+	int grid[9][9];
+	for (int cell = 0; cell < 81; cell++) {
+		grid[cell / 9][cell % 9] = puzzle[cell] == '.' ? 0 : puzzle[cell] - '0';
+	}
+	if (limit != 1) {
+		int count = solver.countSolutions(grid, (int) limit);
+		*guesses = solver.guesses;
+		return count;
+	}
+	int out[9][9];
+	bool solved = solver.solve(grid, out);
+	*guesses = solver.guesses;
+	if (!solved) {
+		return 0;
+	}
+	for (int cell = 0; cell < 81; cell++) {
+		solution[cell] = char('0' + out[cell / 9][cell % 9]);
+	}
+	return 1;
+}
+
 struct Solver {
 	const char *name;
 	SolverFn solve;
@@ -63,6 +87,7 @@ struct Solver {
 
 const std::vector<Solver> SOLVERS = {
 	{"sudokusolver", SudokuSolverAdapter},
+	{"fastbandsolver", FastBandSolverAdapter},
 	{"tdoku", TdokuSolverDpllTriadSimd},
 	{"jsolve", OtherSolverJSolve},
 	{"kudoku", OtherSolverKudoku},
@@ -163,7 +188,7 @@ int main(int argc, char **argv) {
 	}
 	int reps = std::atoi(argv[1]);
 	std::printf("seconds per puzzle, limit 2, median of %d runs\n\n%-34s %7s", reps, "data set", "puzzles");
-	for (auto const &s : SOLVERS) std::printf(" %13s", s.name);
+	for (auto const &s : SOLVERS) std::printf(" %15s", s.name);
 	std::printf("\n");
 
 	int problems = 0;
@@ -176,7 +201,7 @@ int main(int argc, char **argv) {
 		}
 		std::vector<double> times = medianTimes(puzzles, reps);
 		std::printf("%-34s %7zu", setName(argv[a]).c_str(), puzzles.size());
-		for (double t : times) std::printf(" %13s", decimalSeconds(t).c_str());
+		for (double t : times) std::printf(" %15s", decimalSeconds(t).c_str());
 		std::printf("\n");
 		std::fflush(stdout);
 	}

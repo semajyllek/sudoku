@@ -12,7 +12,7 @@ BENCHLIB = bench/benchlib.hpp $(PUZZLES)
 ORIGINAL = bench/originalsolver.hpp utils.hpp $(BENCHLIB)
 BENCHES = $(BUILD)/bench_sudokusolver $(BUILD)/bench_bitboard $(BUILD)/bench_arrayboard $(BUILD)/uniqueness
 
-# make sota: comparison with tdoku, jsolve and kudoku, from a tdoku checkout (see the README)
+# make sota: comparison of sudokusolver and fastbandsolver with tdoku, jsolve and kudoku, from a tdoku checkout (see the README)
 TDOKU ?= ../tdoku
 SOTA_FLAGS = -O3 -march=native
 SOTA_DATA = $(BUILD)/sota_data/data
@@ -93,7 +93,7 @@ $(BUILD)/sota/kudoku.o: $(TDOKU)/src/solver_dpll_triad_simd.cc
 	mkdir -p $(BUILD)/sota
 	$(CC) $(SOTA_FLAGS) -w -c $(TDOKU)/other/kudoku/kudoku.c -o $@
 
-$(BUILD)/sota/sota: bench/sota.cpp $(SOLVER) $(SOTA_OBJECTS)
+$(BUILD)/sota/sota: bench/sota.cpp $(SOLVER) fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
 
 clean:
