@@ -6,6 +6,8 @@
 - `fastbandsolver.hpp`: faster solver, same interface. stores each digit's candidates by band (zhouyundong's layout,
   as in JCZSolve), prunes with matching rules on bands and stacks, and branches on the two-candidate cell with the most
   unsolved peers. faster than tdoku on all five data sets below
+- `parallelbandsolver.hpp`: fastbandsolver's search spread over several threads for one puzzle, same interface.
+  about twice as fast on the hardest puzzles with 4 threads; no help on easy ones
 - `arrayboard.hpp` and `bitboard.hpp`: the original solvers. both fill cells in row order and backtrack, giving up
   after 20 million tries
 - `gendata.cpp`: generates the puzzles in `data/`
@@ -17,9 +19,14 @@ make bench    # sudokusolver timings and the uniqueness report
 make data     # regenerate data/ (same seed, same files)
 make watch    # replay the solver on a puzzle in the terminal, see below
 make sota     # compare with tdoku, jsolve and kudoku, see results
+make parallel # one puzzle on several threads: parallelbandsolver against fastbandsolver and tdoku (about 4 minutes)
+make throughput  # many puzzles on many cores, one process per core (about 30 minutes)
 make paper    # build/paper/paper.pdf, the write-up (needs latexmk)
 make all      # also builds the original solvers' benchmarks (bitboard.hpp needs brew install libomp)
 ```
+
+`make sota`, `make parallel` and `make throughput` check uniqueness (a limit of 2 solutions) by default; add `LIMIT=1`
+to time finding one solution instead.
 
 each benchmark binary takes `data [reps]`, `hard [name|all]` or `par [reps] [threads...]`.
 

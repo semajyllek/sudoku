@@ -8,6 +8,7 @@ solution and agree with sudokusolver on how many solutions it has.
 Built by `make sota`, which needs a tdoku checkout at ../tdoku (see the README).
 
 usage: sota <reps> <data file>...
+the solution limit is 2, or the LIMIT environment variable (1: find one solution, without checking uniqueness)
 */
 #include "../sudokusolver.hpp"
 #include "../fastbandsolver.hpp"
@@ -138,12 +139,15 @@ int countProblems(Solver const &solver, std::vector<std::string> const &puzzles)
 }
 
 
+size_t timingLimit = 2;
+
+
 double secondsPerPuzzle(Solver const &solver, std::vector<std::string> const &puzzles) {
 	char solution[82];
 	size_t guesses;
 	auto start = std::chrono::steady_clock::now();
 	for (auto const &p : puzzles) {
-		solver.solve(p.c_str(), 2, 0, solution, &guesses);
+		solver.solve(p.c_str(), timingLimit, 0, solution, &guesses);
 	}
 	return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / puzzles.size();
 }
@@ -187,7 +191,8 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	int reps = std::atoi(argv[1]);
-	std::printf("seconds per puzzle, limit 2, median of %d runs\n\n%-34s %7s", reps, "data set", "puzzles");
+	if (std::getenv("LIMIT")) timingLimit = std::atoi(std::getenv("LIMIT"));
+	std::printf("seconds per puzzle, limit %zu, median of %d runs\n\n%-34s %7s", timingLimit, reps, "data set", "puzzles");
 	for (auto const &s : SOLVERS) std::printf(" %15s", s.name);
 	std::printf("\n");
 

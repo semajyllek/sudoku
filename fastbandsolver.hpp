@@ -80,6 +80,7 @@ size is what matters, and this choice makes it much smaller than guessing on the
 #include <cstring>
 
 class FastBandSolver {
+	friend class ParallelBandSolver;  // reuses the propagation, placement and tables
 	public:
 		// fills out with a solution. false if the clues conflict or there is no solution
 		bool solve(const int in[9][9], int out[9][9]);
@@ -231,6 +232,7 @@ class FastBandSolver {
 		static void place(State &s, int digit, int band, Mask cell);
 		static int peerScore(State const &s, int band, int index);
 		void record(State const &s);
+		static void writeSolution(State const &s, int *out);
 };
 
 
@@ -506,12 +508,16 @@ inline int FastBandSolver::peerScore(State const &s, int band, int index) {
 
 // counts a solution, and copies out the first one: each cell's digit is the one whose mask has its bit
 inline void FastBandSolver::record(State const &s) {
-	if (found++ == 0 && solutionOut) {
-		for (int cell = 0; cell < 81; cell++) {
-			Mask bit = Mask(1) << (cell % 27);
-			int digit = 0;
-			while (!(s.cells[digit * 3 + cell / 27] & bit)) digit++;
-			solutionOut[cell] = digit + 1;
+	if (found++ == 0 && solutionOut) writeSolution(s, solutionOut);
+}
+
+
+// in a solved state each cell is in exactly one digit's mask: write each digit into the cells of its masks. (Looking
+// up each cell's digit instead scans up to nine masks per cell, which cost about half a microsecond per puzzle.)
+inline void FastBandSolver::writeSolution(State const &s, int *out) {
+	for (int digit = 0; digit < 9; digit++) {
+		for (int band = 0; band < 3; band++) {
+			for (Mask m = s.cells[digit * 3 + band]; m; m &= m - 1) out[band * 27 + std::countr_zero(m)] = digit + 1;
 		}
 	}
 }

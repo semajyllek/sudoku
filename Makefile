@@ -12,6 +12,9 @@ BENCHLIB = bench/benchlib.hpp $(PUZZLES)
 ORIGINAL = bench/originalsolver.hpp utils.hpp $(BENCHLIB)
 BENCHES = $(BUILD)/bench_sudokusolver $(BUILD)/bench_bitboard $(BUILD)/bench_arrayboard $(BUILD)/uniqueness
 
+# solution limit for make sota, parallel and throughput: 2 checks uniqueness (tdoku's standard), 1 finds one solution
+LIMIT ?= 2
+
 # make sota: comparison of sudokusolver and fastbandsolver with tdoku, jsolve and kudoku, from a tdoku checkout (see the README)
 TDOKU ?= ../tdoku
 SOTA_FLAGS = -O3 -march=native
@@ -19,7 +22,7 @@ SOTA_DATA = $(BUILD)/sota_data/data
 SOTA_SETS = puzzles2_17_clue puzzles3_magictour_top1465 puzzles6_forum_hardest_1106 puzzles5_forum_hardest_1905_11+ puzzles0_kaggle
 SOTA_OBJECTS = $(BUILD)/sota/tdoku.o $(BUILD)/sota/tdoku_util.o $(BUILD)/sota/jsolve.o $(BUILD)/sota/kudoku.o
 
-.PHONY: all test bench data watch sota paper figs clean
+.PHONY: all test bench data watch sota parallel throughput paper figs clean
 
 all: $(BUILD)/test_sudokusolver $(BENCHES) $(BUILD)/gendata $(BUILD)/watch
 
@@ -41,7 +44,17 @@ data: $(BUILD)/gendata
 
 # takes a few minutes
 sota: $(BUILD)/sota/sota $(BUILD)/sota_data/unpacked
-	./$(BUILD)/sota/sota 5 $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
+	LIMIT=$(LIMIT) ./$(BUILD)/sota/sota 5 $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
+
+# one puzzle at a time on several threads: parallelbandsolver against fastbandsolver and tdoku
+parallel: $(BUILD)/sota/parallel $(BUILD)/sota_data/unpacked
+	LIMIT=$(LIMIT) ./$(BUILD)/sota/parallel 5 2,3,4,6 $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
+
+# many puzzles on many cores, one process per core: fastbandsolver, tdoku, jsolve, kudoku. takes about 30 minutes
+throughput: $(BUILD)/sota/throughput $(BUILD)/sota_data/unpacked
+	LIMIT=$(LIMIT) python3 bench/throughput.py ./$(BUILD)/sota/throughput 1,2,4,8,10,12,14 $(SOTA_DATA)/puzzles6_forum_hardest_1106:40 \
+		$(SOTA_DATA)/puzzles5_forum_hardest_1905_11+:1 $(SOTA_DATA)/puzzles3_magictour_top1465:60 \
+		$(SOTA_DATA)/puzzles2_17_clue:5 $(SOTA_DATA)/puzzles0_kaggle:6
 
 # regenerates the paper's algorithm figures from a real run of fastbandsolver (needs the data from make sota)
 figs: $(BUILD)/sota_data/unpacked fastbandsolver.hpp paper/figs/dump.cpp paper/figs/make_figs.py
@@ -104,6 +117,12 @@ $(BUILD)/sota/kudoku.o: $(TDOKU)/src/solver_dpll_triad_simd.cc
 	$(CC) $(SOTA_FLAGS) -w -c $(TDOKU)/other/kudoku/kudoku.c -o $@
 
 $(BUILD)/sota/sota: bench/sota.cpp $(SOLVER) fastbandsolver.hpp $(SOTA_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
+
+$(BUILD)/sota/parallel: bench/parallel.cpp parallelbandsolver.hpp fastbandsolver.hpp $(SOTA_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) $< $(BUILD)/sota/tdoku.o $(BUILD)/sota/tdoku_util.o -o $@
+
+$(BUILD)/sota/throughput: bench/throughput.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
 
 clean:

@@ -53,11 +53,14 @@ formulated for constraint models in 2005, here applied by table lookup in a band
 two-candidate cell with the most unsolved peers (the classic degree tie-break) instead of the first one found;
 (3) a fewest-candidates fallback when no two-candidate cell exists. On an Apple M4 Max, checking uniqueness (a
 solution limit of 2) as in tdoku's benchmarks, FastBandSolver is 1.07--1.62$\times$ faster than native tdoku on all
-five of tdoku's standard data sets, including 1.17$\times$ on the 375 hardest forum puzzles. An ablation attributes
+five of tdoku's standard data sets, including 1.17$\times$ on the 375 hardest forum puzzles; when only one solution is needed (a limit of
+1) it is also fastest on all five, by 1.07--1.61$\times$. An ablation attributes
 the gain mainly to branching: the search makes 138 guesses per puzzle on that set where JCZSolve makes 363. Compared with tdoku's published x86 results, scalar solvers gain much more from the M4 than tdoku does, and a
 projection suggests FastBandSolver would be about 0.7 times tdoku's speed on a recent Intel processor with AVX-512:
-the advantage is specific to Apple Silicon. We also report five approaches that did not beat tdoku, with measurements: template (pattern-overlay) search, several
-search-tree nodes in SIMD lanes, lookahead probing, triad rules, and joining band fillings.
+the advantage is specific to Apple Silicon. On many cores, running one puzzle per core, FastBandSolver also has the
+highest throughput at every core count; a parallel version that splits one puzzle's search between threads solves the
+hardest puzzles $2.1\times$ faster on 4 threads. We also report six approaches that did not beat tdoku, with measurements: template (pattern-overlay) search, several search-tree nodes in SIMD lanes, interleaving sibling branches, lookahead
+probing, triad rules, and joining band fillings.
 \end{abstract}
 
 \section{Introduction}
@@ -93,6 +96,8 @@ perfect matchings. Our contributions:
   picking the two-candidate cell with the most unsolved peers cuts the tree by 45\% at almost no cost, and a
   fewest-candidates fallback removes another 12\% of the time on the hardest set, even though it fires at only 1\%
   of branch nodes.
+\item \textbf{Multi-core results} (\cref{sec:multicore}): higher throughput than tdoku at every number of cores, an analysis showing that about 96\% of the search trees' work (counted in band updates) could run in parallel, and ParallelBandSolver, which halves the time
+  of the hardest puzzles with 4 threads, with what limits it.
 \item \textbf{Negative results} with measurements (\cref{sec:negative}): complete per-digit template inference,
   running search-tree nodes in SIMD lanes, lookahead, triad rules, and band decomposition all fail to beat tdoku
   here, and we say why.
@@ -1492,6 +1497,38 @@ branching & rule & fallback & & & & & \\
 \end{tabular}
 \end{table}
 
+\paragraph{Finding one solution.} Every result above checks uniqueness, with a limit of 2. With a limit of 1 a
+solver only has to find one solution, stops there, and must write it out; the order in which it tries the two digits
+of a guess now matters, and the whole tree no longer has to be explored. \Cref{tab:limit1} repeats the comparison at
+limit 1. FastBandSolver is fastest on all five sets here too: $1.36\times$ faster than tdoku on the hardest set,
+$1.18\times$ on the second forum set, $1.23\times$ on magictour, $1.61\times$ on 17-clue and $1.07\times$ on kaggle.
+JCZSolve comes closer at limit 1 than at limit 2, within 4\% on the hardest set, since stopping at the first solution
+removes much of the benefit of a smaller tree; tdoku still makes the fewest guesses. Measuring this exposed one cost that
+only limit 1 pays: copying out the solution first looked up each cell's digit by scanning the digits' masks, about half a
+microsecond per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
+removed it; the numbers here are with that change, which does not affect limit 2, where no solution is copied.
+\texttt{make sota LIMIT=1} reproduces the table for every solver but JCZSolve.
+
+\begin{table}[t]
+\centering
+\caption{Finding one solution: time per puzzle in \si{\micro\second} (guesses per puzzle), limit 1, median of 7
+interleaved runs. Every solver finds a valid solution to every puzzle, and every solver writes it out.}
+\label{tab:limit1}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
+\midrule
+17 clue & 49158 & \textbf{1.70} (0.56) & 2.74 (0.46) & 2.08 (1.53) & 2.76 (0.48) & 8.20 (2.95) \\
+magictour top 1465 & 1465 & \textbf{4.40} (6.85) & 5.42 (6.07) & 6.04 (13.3) & 7.71 (8.06) & 31.5 (18.0) \\
+forum hardest 1106 & 375 & \textbf{28.7} (65.9) & 39.1 (59.8) & 30.0 (98.9) & 74.2 (101) & 278 (168) \\
+forum hardest 1905 11+ & 48766 & \textbf{20.5} (44.0) & 24.2 (34.2) & 27.7 (84.8) & 45.2 (52.8) & 135 (75.4) \\
+kaggle & 100000 & \textbf{0.863} (0) & 0.923 (0) & 1.13 (0) & 1.51 (0) & 5.57 (0) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{ARM compared with published x86 results.} We could not run the solvers on x86 ourselves, but tdoku's
 repository publishes results for the same data sets on several x86 machines. \Cref{tab:x86} compares its results for
 an Intel Core i7-1065G7 (a 2019 laptop processor with AVX-512, the machine our pull request compares against)
@@ -1534,10 +1571,226 @@ M4, not a general one. The smaller search tree would carry over, since it does n
 processor where tdoku's wide SIMD pays off, it is not enough to make up the difference. Measuring FastBandSolver on
 x86 is the most important piece of follow-up work.
 
+\section{Using more than one core}
+\label{sec:multicore}
+
+Everything so far runs on one core, as tdoku's benchmark does. There are two different ways to use more. The first is
+\emph{throughput}: solving many puzzles at once, each core taking its own share. That is the natural setting for
+rating, generating or searching millions of puzzles, and it is fair to every solver, because every solver can be run
+that way unchanged. The second is \emph{latency}: solving one puzzle faster by splitting its search tree between cores.
+Only a solver built for it can do that, so a comparison with single-threaded solvers is no longer like for like, and we
+report it separately.
+
+\subsection{Throughput}
+
+We ran each solver as $N$ separate processes, each solving every $N$-th puzzle of a data set, so that each gets a similar
+mix of easy and hard puzzles, all starting at the same moment; throughput is the number of puzzles solved divided by the time until the last process finishes (median of three
+runs). Processes rather than threads, because tdoku and jsolve keep their state in global variables and cannot run
+twice in one process. The M4 Max has 10 performance cores and 4 efficiency cores. \Cref{tab:throughput} gives the
+results; \texttt{make throughput} reproduces them.
+
+\begin{table}[t]
+\centering
+\caption{Throughput in thousands of puzzles per second, limit 2, with $N$ processes, each solving every $N$-th puzzle of the data set (median of 3 runs). The last column is FastBandSolver's throughput over tdoku's.}
+\label{tab:throughput}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & $N$ & FastBandSolver & tdoku & jsolve & kudoku & ratio \\
+\midrule
+forum hardest 1106 & 1 & \textbf{15} & 13 & 7 & 2 & 1.19 \\
+ & 4 & \textbf{60} & 51 & 24 & 6 & 1.17 \\
+ & 10 & \textbf{150} & 133 & 56 & 15 & 1.13 \\
+ & 14 & \textbf{149} & 131 & 54 & 16 & 1.13 \\
+\midrule
+forum hardest 1905 11+ & 1 & \textbf{24} & 21 & 11 & 4 & 1.17 \\
+ & 4 & \textbf{97} & 83 & 43 & 14 & 1.18 \\
+ & 10 & \textbf{236} & 200 & 104 & 34 & 1.18 \\
+ & 14 & \textbf{236} & 218 & 110 & 38 & 1.08 \\
+\midrule
+magictour top 1465 & 1 & \textbf{140} & 121 & 76 & 15 & 1.16 \\
+ & 4 & \textbf{565} & 474 & 291 & 59 & 1.19 \\
+ & 10 & \textbf{1{,}572} & 1{,}382 & 758 & 132 & 1.14 \\
+ & 14 & \textbf{1{,}539} & 1{,}312 & 721 & 147 & 1.17 \\
+\midrule
+17 clue & 1 & \textbf{536} & 334 & 325 & 66 & 1.61 \\
+ & 4 & \textbf{2{,}051} & 1{,}281 & 1{,}208 & 250 & 1.60 \\
+ & 10 & \textbf{4{,}916} & 3{,}157 & 2{,}902 & 598 & 1.56 \\
+ & 14 & \textbf{5{,}116} & 3{,}374 & 2{,}974 & 664 & 1.52 \\
+\midrule
+kaggle & 1 & \textbf{1{,}149} & 1{,}065 & 641 & 132 & 1.08 \\
+ & 4 & \textbf{4{,}534} & 4{,}176 & 2{,}521 & 517 & 1.09 \\
+ & 10 & \textbf{11{,}289} & 10{,}184 & 6{,}243 & 1{,}264 & 1.11 \\
+ & 14 & \textbf{11{,}428} & 10{,}445 & 6{,}275 & 1{,}225 & 1.09 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+FastBandSolver has the highest throughput at every number of processes on every data set; its lead over tdoku ranges from $1.08\times$ (kaggle) to $1.61\times$ (17-clue), and on the hardest set it stays between
+$1.13\times$ and $1.19\times$ at every number of processes. Scaling is close to linear up to the 10 performance cores: from one process to ten, throughput on the second forum set
+grows $9.8\times$ for FastBandSolver and $9.7\times$ for tdoku. Beyond ten, the four efficiency cores add little and the
+results get noisier. A first version gave each process a contiguous block of puzzles instead; hard puzzles cluster in
+the files, so some processes had much more work than others, and FastBandSolver's lead on the hardest set appeared to
+fall to $1.03\times$ at 10 processes. The throughput comparison inherits the platform question of \cref{sec:arm}: on x86,
+where the projection puts FastBandSolver behind tdoku on one core, it would presumably be behind on many cores too. In a local run, JCZSolve trailed
+both solvers at every process count, as it does on one core.
+
+\begin{table}[t]
+\centering
+\caption{Throughput at limit 1 (one solution, written out), in thousands of puzzles per second, as in
+\cref{tab:throughput}.}
+\label{tab:throughput1}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & $N$ & FastBandSolver & tdoku & jsolve & kudoku & ratio \\
+\midrule
+forum hardest 1106 & 1 & \textbf{35} & 26 & 14 & 4 & 1.35 \\
+ & 4 & \textbf{132} & 100 & 48 & 12 & 1.32 \\
+ & 10 & \textbf{313} & 257 & 109 & 25 & 1.22 \\
+ & 14 & \textbf{366} & 271 & 101 & 28 & 1.35 \\
+\midrule
+forum hardest 1905 11+ & 1 & \textbf{48} & 40 & 21 & 7 & 1.19 \\
+ & 4 & \textbf{184} & 156 & 82 & 28 & 1.18 \\
+ & 10 & \textbf{448} & 380 & 203 & 67 & 1.18 \\
+ & 14 & \textbf{523} & 453 & 240 & 80 & 1.16 \\
+\midrule
+magictour top 1465 & 1 & \textbf{226} & 189 & 127 & 31 & 1.20 \\
+ & 4 & \textbf{953} & 833 & 511 & 117 & 1.14 \\
+ & 10 & \textbf{2{,}622} & 2{,}043 & 1{,}312 & 263 & 1.28 \\
+ & 14 & \textbf{3{,}052} & 2{,}414 & 1{,}613 & 299 & 1.26 \\
+\midrule
+17 clue & 1 & \textbf{578} & 354 & 356 & 118 & 1.63 \\
+ & 4 & \textbf{2{,}173} & 1{,}343 & 1{,}305 & 440 & 1.62 \\
+ & 10 & \textbf{5{,}243} & 3{,}328 & 3{,}154 & 1{,}043 & 1.58 \\
+ & 14 & \textbf{6{,}092} & 3{,}816 & 3{,}577 & 1{,}239 & 1.60 \\
+\midrule
+kaggle & 1 & \textbf{1{,}173} & 1{,}061 & 650 & 175 & 1.10 \\
+ & 4 & \textbf{4{,}602} & 4{,}152 & 2{,}536 & 681 & 1.11 \\
+ & 10 & \textbf{11{,}425} & 10{,}326 & 6{,}303 & 1{,}680 & 1.11 \\
+ & 14 & \textbf{12{,}570} & 11{,}374 & 7{,}125 & 1{,}951 & 1.11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At limit 1 (\cref{tab:throughput1}, \texttt{make throughput LIMIT=1}) FastBandSolver again has the highest throughput at
+every number of processes on every data set, by $1.10\times$ to $1.63\times$ over tdoku.
+
+
+\subsection{The search tree allows a lot of parallelism}
+
+With a limit of 2 on a puzzle with one solution, the whole tree must be explored, and its branches are independent.
+Before writing any parallel code we measured how much this allows. We recorded each puzzle's search tree, with the work
+of each node (band updates, the dominant cost), and computed two bounds.
+\begin{itemize}
+\item The \emph{critical path}, the most work along any single path from the root to a leaf, cannot be split: it limits
+  the speedup however many cores are used. On the hardest set it is only 3.5\% of the total work (5.5\% on the second
+  forum set), so with ideal splitting 14 cores could give $13.98\times$ ($13.6\times$). The trees are almost entirely
+  parallel work. On magictour, whose trees are small, the ceiling is $3.5\times$.
+\item Splitting at a fixed depth, handing each subtree below it to a core, does much worse, at best $4.5\times$ on the
+  hardest set and $3.7\times$ on the second forum set, because the subtrees are very unequal: good use of many cores
+  needs branches to be handed out as the search goes.
+\end{itemize}
+
+The obstacle is size. A node takes about 0.2\us{} on average, so moving work between cores has to cost less than that,
+or be limited to branches large enough to be worth it.
+
+\subsection{ParallelBandSolver}
+
+\texttt{parallelbandsolver.hpp} runs FastBandSolver's search on several threads, with the same interface. The calling
+thread searches as before. At a two-candidate branch it may put the second branch, a copy of the 246-byte state, on a
+shared queue instead of exploring it later itself; idle worker threads take branches from the queue and search them the
+same way, handing out branches in turn. A shared counter stops every thread once the limit is reached. Four details,
+each found by measurement on a prototype, make it faster than one thread rather than slower:
+\begin{itemize}
+\item \textbf{No sleeping on the queue.} With an ordinary mutex, every idle thread tried to take a new branch at once, and
+  under that contention the operating system put threads to sleep, which costs more than a whole puzzle: with 8 threads
+  the hardest set took 177\us{} per puzzle instead of 56\us. A try-lock, where a thread that finds the queue busy keeps
+  spinning, together with the depth limit below, brought 4 threads to 25\us.
+\item \textbf{Only near the top.} Branches are handed out only while fewer than 8 guesses deep, where subtrees are large.
+\item \textbf{Only for hard puzzles.} A puzzle is searched by the calling thread alone until it has taken 16 nodes, so
+  easy puzzles never involve the other threads.
+\item \textbf{Workers sleep between hard puzzles.} Spinning idle threads lowered the clock speed of the working one:
+  kaggle puzzles, which never share a branch, ran up to 12\% slower. Workers now spin only while a puzzle is being shared,
+  and sleep after a short grace period.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\caption{Latency: time per puzzle in \si{\micro\second}, limit 2, one puzzle at a time, median of 5 runs. tdoku and
+FastBandSolver use one thread; ParallelBandSolver uses the number of threads shown, with one pool of threads alive at a time (in a first run with four pools alive at once, whose idle workers interfered,
+4 threads took 40.9\us{} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
+comparison with tdoku, which uses one core.}
+\label{tab:latency}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+ & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
+\cmidrule(lr){4-7}
+data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
+\midrule
+17 clue & 2.98 & 1.85 & 1.88 & 1.91 & 1.90 & 2.00 \\
+magictour top 1465 & 8.20 & 6.97 & 6.44 & \textbf{6.29} & 6.34 & 9.06 \\
+forum hardest 1106 & 73.7 & 62.7 & 40.9 & 33.0 & \textbf{29.5} & 63.7 \\
+forum hardest 1905 11+ & 48.0 & 41.3 & 28.0 & 25.3 & \textbf{24.4} & 45.7 \\
+kaggle & 0.951 & 0.871 & 0.870 & 0.874 & 0.872 & 0.872 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:latency} gives the results; \texttt{make parallel} reproduces them. With 4 threads, the hardest set takes
+29.5\us{} per puzzle instead of 62.7\us{} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's 73.7\us), and the
+second forum set 24.4\us{} instead of 41.3\us{} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
+
+\begin{table}[t]
+\centering
+\caption{Latency at limit 1 (one solution, written out): time per puzzle in \si{\micro\second}, median of 5 runs, as in
+\cref{tab:latency}.}
+\label{tab:latency1}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+ & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
+\cmidrule(lr){4-7}
+data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
+\midrule
+17 clue & 2.75 & 1.69 & 1.72 & 1.74 & 1.73 & 1.81 \\
+magictour top 1465 & 5.30 & 4.42 & \textbf{4.21} & 4.30 & 4.42 & 6.13 \\
+forum hardest 1106 & 38.6 & 28.9 & 20.0 & 17.4 & \textbf{16.5} & 40.0 \\
+forum hardest 1905 11+ & 24.4 & 20.6 & 14.9 & \textbf{13.4} & 13.4 & 31.0 \\
+kaggle & 0.936 & 0.871 & 0.861 & 0.865 & 0.861 & 0.858 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At limit 1 (\cref{tab:latency1}, \texttt{make parallel LIMIT=1}) the pattern is the same: 4 threads take the hardest set
+from 28.9 to 16.5\us{} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
+13.4\us{} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
+at the first solution, so there is less of the tree to share.
+The easy sets are not helped: kaggle is unchanged, since its puzzles never reach the sharing threshold, and 17-clue is
+about 3\% slower. Beyond 4 threads the times get worse again. Our explanation, which we could not test directly, is that
+the performance cores sit in two clusters, and passing work between clusters costs more than a small subtree is worth;
+macOS does not let a program choose which cores its threads run on.
+
+The gap to the ceiling of the previous subsection is large: about $2\times$ against a theoretical $14\times$. Closing it
+would take cheaper hand-offs than a shared queue (for example a queue per thread, from which idle threads steal), and
+control over where threads run. It remains a latency result for hard puzzles only.
+
+\paragraph{Correctness.} The parallel search explores the same tree as FastBandSolver, divided between threads: until the limit is reached,
+each branch is searched exactly once, by whichever thread holds it; after that, branches still waiting return without
+work, as the serial search stops early too. The proof of \cref{thm:correct} therefore carries over, with two changes. The shared counter can overshoot the limit when two threads find solutions at the same time, so the
+count returned is the minimum of the counter and the limit. The first solution is copied out by the thread whose increment takes the counter from 0 to 1. Each thread has its own
+array of 82 states, and a branch taken from the queue starts at the bottom of it with no more unsolved cells than the
+state it was copied from, so \cref{lem:termination}'s bound holds per thread. The guess count is summed over the
+branches actually explored, so once the limit is reached it can be lower than FastBandSolver's. We checked the solution counts at limits 1, 2 and 3, and every solution, on
+all seven of tdoku's data sets with 2, 4 and 8 threads; again with sharing forced from the first node, which makes the
+puzzles with several solutions share branches; and ran the repository's tests, including ThreadSanitizer, which reported
+no data races.
+
 \section{What did not work}
 \label{sec:negative}
 
-We tried five other directions before the design above. Each was measured on the hardest set against tdoku's
+We tried six other directions before the design above. Each was measured on the hardest set against tdoku's
 75\us{} and 110 guesses; we report them because each is a natural idea and none paid off here.
 
 \paragraph{Template search.} The template or pattern-overlay method~\cite{stuart2008pom} treats each digit's placements as one
@@ -1565,6 +1818,12 @@ branching, and 195\,ns with 16 lanes, near parity before any scheduling cost. We
 cannot be kept full over most of a tree of a few hundred nodes. Two things are missing: NEON has no gather, so the $3\times 3$ matching takes about 40 bit
 operations instead of one lookup in a 512-entry table, and full rounds recompute all 27 (digit, band) masks where an
 incremental engine touches only the changed ones.
+
+\paragraph{Interleaving sibling branches on one core.} FastBandSolver runs at about 2.4 instructions per cycle, well
+below what the core can issue, mostly because of hard-to-predict branches. We tried propagating both children of each
+two-way guess in one interleaved loop, so that the processor could overlap two independent streams of work, before
+searching them in turn: the same work in a different order. It was about 3\% slower on the hard sets, with identical
+results; the extra bookkeeping cost more than the overlap gained.
 
 \paragraph{Lookahead.} Probing both children of the best-scored two-candidate cells before branching, and taking a
 failed probe as a free deduction, shrinks the tree fourfold: with JCZSolve's engine and 2 probed cells per node the
@@ -1603,10 +1862,13 @@ different objects, which is why we compare times.
 
 \section{Conclusion}
 
-A scalar band solver with a matching-based stack rule, peer-count branching and a fewest-candidates fallback is faster than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$\times$. Branching carries most of the
+A scalar band solver with a matching-based stack rule, peer-count branching and a fewest-candidates fallback is faster than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$\times$ when checking uniqueness and by
+1.07--1.61$\times$ when finding one solution. Branching carries most of the
 gain. The advantage depends on the processor: on the M4 scalar code gains more than tdoku's SIMD code does, and a
 projection from published results puts FastBandSolver at about 0.7 times tdoku's speed on a recent Intel processor
-with AVX-512. Measuring it on x86 is the next step. The code and the benchmark are in the repository, and \texttt{make sota} reproduces \cref{tab:sota}.
+with AVX-512. Measuring it on x86 is the next step. On many cores it keeps the
+highest throughput, and splitting one puzzle's search between 4 threads halves the time of the hardest puzzles, far
+below what the trees would allow, because moving work between cores costs about as much as the work. The code and the benchmark are in the repository, and \texttt{make sota} reproduces \cref{tab:sota}.
 
 \paragraph{Acknowledgments.} FastBandSolver's representation follows zhouyundong's band solver and its implementations
 in JCZSolve and rust\_sudoku; the benchmark harness and data sets are Tom Dillon's. This work was done depending heavily on Anthropic's LLM harness Claude (Claude Code), using the model Claude Opus~5.5 with occasional advisory support from Claude Fable, including in theorizing, experimentation, and writeup.

@@ -212,4 +212,34 @@ count, plus the first solution it found.
 numbers, and the choice of where to guess keeps the tree of guesses small: about 138 guesses per puzzle on the hardest
 test set, where JCZSolve, the similar solver it builds on, makes 363.
 
+
+\section*{Could parallelization make it faster?}
+
+Two different questions, with different answers.
+
+\paragraph{Many puzzles at once (throughput).} Yes, and it is a fair comparison, because every solver can be run
+this way unchanged: each core solves its own share of the puzzles. FastBandSolver has the highest throughput at every
+number of cores on every data set (the paper's section ``Using more than one core'', \texttt{make throughput}). Scaling is close to linear up to the chip's 10 performance cores (about $9.8\times$ at 10), and its 4 efficiency
+cores add little beyond that. FastBandSolver's lead over tdoku holds at every core count: $1.13$--$1.19\times$ on the
+hardest set. (An early run that gave each process a contiguous block of puzzles made the lead look like it shrank;
+hard puzzles cluster in the files, so the blocks were uneven.)
+
+\paragraph{One puzzle faster (latency).} Partly. With a limit of 2 the whole search tree has to be explored, and its
+branches are independent, so threads can take different branches.
+\begin{itemize}
+\item In principle there is a lot of room: the longest single path through a hardest puzzle's tree is only 3.5\% of
+  its work, so perfect splitting could reach about $14\times$ on 14 cores.
+\item In practice, ParallelBandSolver reaches $2.1\times$ on the hardest set with 4 threads (29.5 against 62.7\,\textmu s
+  per puzzle), about $1.7\times$ on the second forum set, and nothing on easy puzzles. More threads are slower again.
+\item The gap is the cost of moving work between cores: a node of search takes about 0.2\,\textmu s, and passing a branch
+  to another core, especially one in the other cluster of performance cores, costs as much.
+\item It took three fixes to get this far: a queue lock that never puts threads to sleep (an ordinary mutex made 8
+  threads three times slower than one), handing out only branches near the top of the tree, and letting idle workers
+  sleep between hard puzzles (spinning workers slowed the working core by up to 12\%).
+\item A comparison with single-threaded tdoku is not like for like, so the paper reports it separately.
+\end{itemize}
+
+\paragraph{Within one core.} Two tries failed: running several search nodes in SIMD lanes, and interleaving two sibling
+branches in one loop (about 3\% slower). Both are in the paper's negative results.
+
 \end{document}
