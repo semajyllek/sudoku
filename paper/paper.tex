@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
+\usepackage{cancel}
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{microtype}
@@ -28,6 +29,10 @@
 \title{Fewer, Better Guesses: A Scalar Band Solver\\that Outperforms SIMD Sudoku Solvers on Apple Silicon}
 \author{James Kelly}
 \date{September 2026}
+
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\textfraction}{0.1}
+\renewcommand{\floatpagefraction}{0.7}
 
 \begin{document}
 \maketitle
@@ -545,17 +550,39 @@ $3\times 3$ matrix with $B^{d,s}_{bj}=1$ when $d$ has a candidate in column $3s+
 
 \subsection{Lemmas about the $3\times 3$ support}
 
-\begin{lemma}[the $2\times 2$ minor]
+For an entry $(i,j)$ of a $3\times 3$ matrix $A$, let $A^{(ij)}$ be the $2\times 2$ submatrix left after deleting row $i$
+and column $j$: the other two rows and the other two columns, in their original order (they need not be adjacent). The
+\emph{permanent} of a $2\times 2$ matrix is its determinant with a plus sign in place of the minus:
+\[
+\operatorname{perm}\begin{pmatrix} a & b \\ c & e \end{pmatrix} = ae + bc .
+\]
+For a 0-1 matrix, $ae=1$ exactly when the straight pairing (first row with first column, second with second) is
+available, and $bc=1$ exactly when the crossed pairing is, so the permanent counts the perfect matchings of the
+$2\times 2$ graph and is nonzero exactly when it has one.
+
+\begin{lemma}[deleting a row and a column]
 \label{lem:minor}
-$(i,j)$ is a 1-entry of $\mathrm{supp}(A)$ if and only if $A_{ij}=1$ and the $2\times 2$ minor $A^{(ij)}$ obtained by
-deleting row $i$ and column $j$ has a nonzero permanent.
+$(i,j)$ is a 1-entry of $\mathrm{supp}(A)$ if and only if $A_{ij}=1$ and $\operatorname{perm} A^{(ij)}\neq 0$. In words:
+row $i$ can be paired with column $j$ exactly when that entry is available and the other two rows can still be paired
+with the other two columns.
 \end{lemma}
 \begin{proof}
-The perfect matchings $\pi$ of $A$ with $\pi(i)=j$ correspond one-to-one to the perfect matchings of $A^{(ij)}$ (the
-restriction of $\pi$ to the other two rows), provided $A_{ij}=1$, and there are none when $A_{ij}=0$. The permanent of a
-$2\times 2$ 0-1 matrix $\bigl(\begin{smallmatrix} a & b \\ c & e \end{smallmatrix}\bigr)$ is $ae+bc$, which counts its
-two possible perfect matchings, so it is nonzero exactly when one exists.
+A perfect matching $\pi$ of $A$ with $\pi(i)=j$ uses the entry $(i,j)$, so it needs $A_{ij}=1$, and on the other two
+rows it is a perfect matching of $A^{(ij)}$. Conversely, when $A_{ij}=1$, adding the pair $(i,j)$ to a perfect matching
+of $A^{(ij)}$ gives a perfect matching of $A$ with $\pi(i)=j$. So such a $\pi$ exists exactly when $A_{ij}=1$ and
+$A^{(ij)}$ has a perfect matching, that is, a nonzero permanent.
 \end{proof}
+
+\paragraph{Example.} Take the table of \cref{fig:band}, rows of the band against boxes:
+\[
+A=\begin{pmatrix} 1 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 1 & 1 \end{pmatrix}.
+\]
+For $(0,1)$, row 0 with box 1: $A_{01}=1$, and deleting row 0 and column 1 leaves rows 1, 2 and columns 0, 2,
+$A^{(01)}=\bigl(\begin{smallmatrix} 1 & 0 \\ 0 & 1 \end{smallmatrix}\bigr)$, with permanent $1\cdot 1+0\cdot 0=1$. So
+$(0,1)$ is kept. For $(0,0)$, row 0 with box 0: $A_{00}=1$, but deleting row 0 and column 0 leaves
+$A^{(00)}=\bigl(\begin{smallmatrix} 0 & 0 \\ 1 & 1 \end{smallmatrix}\bigr)$, with permanent $0\cdot 1+0\cdot 1=0$: if row
+0 took box 0, rows 1 and 2 could not share boxes 1 and 2, since row 1 has neither. So $(0,0)$ is removed, which is the
+red entry in \cref{fig:band}(c).
 
 \begin{lemma}[idempotence]
 \label{lem:idempotent}
@@ -622,7 +649,7 @@ JCZSolve is the special case of a band with one column in a stack: its row of
 $B^{d,s}$ has a single 1, which every perfect matching uses, so the column's entries in the other bands lie on no
 perfect matching.
 
-\begin{figure}[t]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[x=0.5cm,y=0.5cm,
   cand/.style={font=\small\bfseries},
@@ -641,7 +668,7 @@ perfect matching.
     \foreach \r/\c in {0/1,0/4,1/0,1/2,2/3,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
   \end{scope}
   % ---------- (b) graph ----------
-  \begin{scope}[xshift=7.2cm]
+  \begin{scope}[xshift=8.6cm]
     \node[anchor=west] at (-1.8,5.1) {\small\textbf{(b)} rows vs.\ boxes};
     \foreach \r in {0,1,2} \node[vtx,label={[font=\scriptsize]left:row \r}] (r\r) at (0,3.5-1.5*\r) {};
     \foreach \k in {0,1,2} \node[vtx,label={[font=\scriptsize]right:box \k}] (b\k) at (4,3.5-1.5*\k) {};
@@ -653,14 +680,25 @@ perfect matching.
   \end{scope}
   % ---------- (c) matrices ----------
   \begin{scope}[yshift=-3.3cm]
-    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(c)} the table $A$ and its perfect matching};
-    \node at (1.6,1.9) {$A=\begin{pmatrix} 1 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 1 & 1 \end{pmatrix}$};
-    \node at (5.4,1.9) {$\longrightarrow$};
-    \node at (8.6,1.9) {$\begin{pmatrix} 0 & \mathbf{1} & 0 \\ \mathbf{1} & 0 & 0 \\ 0 & 0 & \mathbf{1} \end{pmatrix}$};
-    \node[font=\scriptsize,align=center] at (5.4,-0.1) {rows of the table = rows 0--2, columns = boxes 0--2};
+    \node[anchor=west] at (-2.2,5.6) {\small\textbf{(c)} the same graph as a table};
+    \node[font=\footnotesize,align=center] at (5.0,4.1) {$A$: 1 = a 5 is still possible\\ in that row's mini-row of that box};
+    \node[font=\footnotesize] at (5.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & 1 & 1 & 0 \\
+      \text{row }1 & 1 & 0 & 0 \\
+      \text{row }2 & 0 & 1 & 1
+      \end{array}$};
+    \draw[->,thick] (10.2,1.5) -- (14.8,1.5) node[midway,above,font=\footnotesize,align=center] {keep the 1s on a\\perfect matching};
+    \node[font=\footnotesize,align=center] at (20.0,4.1) {$\mathrm{supp}(A)$: the one pairing that fits (bold);\\ \textcolor{red}{red} 1s are removed};
+    \node[font=\footnotesize] at (20.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & \textcolor{red}{\cancel{1}} & \mathbf{1} & 0 \\
+      \text{row }1 & \mathbf{1} & 0 & 0 \\
+      \text{row }2 & 0 & \textcolor{red}{\cancel{1}} & \mathbf{1}
+      \end{array}$};
   \end{scope}
   % ---------- (d) after ----------
-  \begin{scope}[xshift=7.2cm,yshift=-3.3cm]
+  \begin{scope}[xshift=3.5cm,yshift=-7.0cm]
     \node[anchor=west] at (-1.8,5.1) {\small\textbf{(d)} after the band rule};
     \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
     \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
@@ -680,8 +718,10 @@ perfect matching.
 boxes; 5 is still a candidate in the cells shown, and the shaded mini-rows are those that contain a candidate. (b) The
 bipartite graph: an edge joins row $r$ and box $k$ when mini-row $(r,k)$ is shaded. Row 1 has only one edge, so it must
 take box 0; then row 0 must take box 1, and row 2 box 2. That pairing, in black, is the only perfect matching. The two
-red dashed edges are in no perfect matching. (c) The same graph as the table $A$ (1 = edge); the three bold 1s are the
-perfect matching, $\mathrm{supp}(A)$. (d) Removing the red edges removes 5 from mini-row (row 0, box 0) and mini-row
+red dashed edges are in no perfect matching. (c) The same graph as a table $A$: one row of the table per row of the band, one column per box, and a 1 where the
+graph has an edge, that is, where 5 is still possible in that mini-row. Keeping only the 1s that lie on a perfect
+matching gives $\mathrm{supp}(A)$: the three bold 1s are the one pairing that fits, and the red 1s, the dashed edges of
+(b), are removed. (d) Removing the red edges removes 5 from mini-row (row 0, box 0) and mini-row
 (row 2, box 1): the candidates in column 1 of row 0 and column 3 of row 2 are eliminated, although nothing in their own
 row, column or box rules them out directly. The stack rule is the same test with bands in place of rows and a stack's
 columns in place of boxes.}
