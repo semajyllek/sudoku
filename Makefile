@@ -19,7 +19,7 @@ SOTA_DATA = $(BUILD)/sota_data/data
 SOTA_SETS = puzzles2_17_clue puzzles3_magictour_top1465 puzzles6_forum_hardest_1106 puzzles5_forum_hardest_1905_11+ puzzles0_kaggle
 SOTA_OBJECTS = $(BUILD)/sota/tdoku.o $(BUILD)/sota/tdoku_util.o $(BUILD)/sota/jsolve.o $(BUILD)/sota/kudoku.o
 
-.PHONY: all test bench data watch sota clean
+.PHONY: all test bench data watch sota paper clean
 
 all: $(BUILD)/test_sudokusolver $(BENCHES) $(BUILD)/gendata $(BUILD)/watch
 
@@ -42,6 +42,10 @@ data: $(BUILD)/gendata
 # takes a few minutes
 sota: $(BUILD)/sota/sota $(BUILD)/sota_data/unpacked
 	./$(BUILD)/sota/sota 5 $(addprefix $(SOTA_DATA)/,$(SOTA_SETS))
+
+# the paper, in build/paper/paper.pdf. needs a TeX installation with latexmk
+paper: | $(BUILD)
+	cd paper && latexmk -pdf -interaction=nonstopmode -output-directory=../$(BUILD)/paper paper.tex
 
 $(BUILD):
 	mkdir -p $(BUILD)

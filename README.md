@@ -3,6 +3,9 @@
 - `sudokusolver.hpp`: solver built on [TinyBitSet](https://github.com/semajyllek/TinyBitSet). it branches on the cell
   with the fewest candidates and places hidden singles first. it can also count solutions:
   `hasUniqueSolution(puzzle)` checks that a puzzle has exactly one
+- `fastbandsolver.hpp`: faster solver, same interface. stores each digit's candidates by band (zhouyundong's layout,
+  as in JCZSolve), prunes with matching rules on bands and stacks, and branches on the two-candidate cell with the most
+  unsolved peers. faster than tdoku on all five data sets below
 - `arrayboard.hpp` and `bitboard.hpp`: the original solvers. both fill cells in row order and backtrack, giving up
   after 20 million tries
 - `gendata.cpp`: generates the puzzles in `data/`
@@ -14,6 +17,7 @@ make bench    # sudokusolver timings and the uniqueness report
 make data     # regenerate data/ (same seed, same files)
 make watch    # replay the solver on a puzzle in the terminal, see below
 make sota     # compare with tdoku, jsolve and kudoku, see results
+make paper    # build/paper/paper.pdf, the write-up (needs latexmk)
 make all      # also builds the original solvers' benchmarks (bitboard.hpp needs brew install libomp)
 ```
 
@@ -44,17 +48,19 @@ compared with other solvers: seconds per puzzle, on tdoku's standard data sets, 
 unique (a limit of 2 solutions, as in tdoku's benchmarks). Apple M4 Max, clang `-O3 -march=native`. every solver
 solves every puzzle correctly. from `make sota`:
 
-  data set | puzzles | sudokusolver | tdoku | jsolve | kudoku
-  --- | --- | --- | --- | --- | ---
-  17 clue | 49158 | 0.000016 | 0.0000028 | 0.0000029 | 0.000014
-  magictour top 1465 | 1465 | 0.000065 | 0.0000077 | 0.000012 | 0.000061
-  forum hardest 1106 | 375 | 0.00048 | 0.000072 | 0.00015 | 0.00054
-  forum hardest 1905 11+ | 48766 | 0.00027 | 0.000046 | 0.000089 | 0.00027
-  kaggle | 100000 | 0.0000016 | 0.00000092 | 0.0000015 | 0.0000073
+  data set | puzzles | fastbandsolver | sudokusolver | tdoku | jsolve | kudoku
+  --- | --- | --- | --- | --- | --- | ---
+  17 clue | 49158 | 0.0000018 | 0.000017 | 0.0000030 | 0.0000030 | 0.000015
+  magictour top 1465 | 1465 | 0.0000071 | 0.000071 | 0.0000086 | 0.000013 | 0.000066
+  forum hardest 1106 | 375 | 0.000063 | 0.00051 | 0.000076 | 0.00015 | 0.00057
+  forum hardest 1905 11+ | 48766 | 0.000040 | 0.00028 | 0.000047 | 0.000091 | 0.00027
+  kaggle | 100000 | 0.00000086 | 0.0000016 | 0.00000094 | 0.0000016 | 0.0000076
 
 - [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver in its own benchmark of the fastest known
   solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)
 - jsolve and kudoku are the fastest cell-based and exact-cover (dancing links style) solvers in tdoku's benchmarks
+- fastbandsolver is 1.1 to 1.6 times faster than tdoku. `paper/` describes how, with an ablation and the approaches
+  that didn't work
 - sudokusolver is about as fast as kudoku, and 3 to 5.5 times slower than jsolve on the hard sets. jsolve keeps each
   cell's candidates between steps and uses locked candidates. sudokusolver recomputes candidates at every step
 
