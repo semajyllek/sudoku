@@ -1113,7 +1113,7 @@ only shrinking, exposed it; it happened about 21 times per puzzle on the hardest
 the stack rule left it, changes no guess count and no timing beyond 0.5\%. Our correctness checks compare solution
 counts at limits 1, 2 and 3 with tdoku on all seven of tdoku's data sets, 709{,}764 puzzles including 10{,}000 with
 several solutions and 486{,}451 with none, compare with a naive counter on the repository's tests, and validate every
-solution.
+solution; \texttt{make verify} runs the comparison with tdoku.
 
 \subsection{Work profile}
 
@@ -1793,9 +1793,20 @@ processors and 3--10\% on Zen~4 and Zen~5, and changes FastBandSolver's by at mo
 0.76--0.80 to 0.68--0.71, the measured speed ratio of \cref{tab:x86}.
 
 \paragraph{Branch mispredictions.} FastBandSolver mispredicts 6{,}600 branches per puzzle on the hardest set on the
-\texttt{c4}, 3.4 times tdoku's 1{,}900, and 6{,}000 on the M4, 4.0 times tdoku's 1{,}500; its search branches on the contents of the grid at almost every step, where
-tdoku's work is mostly branch-free vector operations. The counts do not change between builds, so they are a property
-of the algorithms, and they are about the same on ARM and x86. On x86 FastBandSolver's IPC is higher than tdoku's
+\texttt{c4}, 3.4 times tdoku's 1{,}900, and 6{,}000 on the M4, 4.0 times tdoku's 1{,}500. The counts do not change
+between builds and are about the same on ARM and x86, so they are a property of the algorithms. They come from the
+propagation, not the search: sampling mispredictions on the \texttt{c4} (without precise sampling, which the virtual
+machine does not offer, so each sample lands just after its branch) puts 84\% of them in the update loop of
+\cref{alg:propagate} and 13\% in the search. An instrumented copy of the solver counts, per puzzle, how often the
+data-dependent branches there run and which way they go. The update loop asks 22{,}540 times whether a (digit, band)
+has changed since it was last checked; 15\% of the answers are yes. Each band update then asks whether the band's
+columns changed, so that the stack rule must run (3{,}225 times, yes 73\%), and whether a row became a single (3{,}225
+times, yes 45\%). Which bands change at each step depends on the puzzle and follows no pattern a predictor can learn:
+a predictor that always guessed the likelier way would miss about 7{,}400 times per puzzle over these and the smaller
+branches, close to the measured count. The test ``has this band changed?'' is also how FastBandSolver skips the 85\%
+of band updates that would change nothing, and so a source of its low instruction count; tdoku instead runs its vector
+operations over the grid without asking, and pays in instructions. The mispredictions are the price of the skipping,
+and they cannot simply be removed (\cref{sec:negative}). On x86 FastBandSolver's IPC is higher than tdoku's
 despite them. Memory plays no part: every solver misses the L1 data cache fewer than 6 times per puzzle, on both
 machines, against about 300 thousand cycles.
 
@@ -2080,6 +2091,18 @@ as tdoku does was worse than peer-count branching with our rules (169 vs.\ 142 g
 be counted by joining lists of band fillings, as in the enumeration of grids~\cite{felgenhauer2006mathematics}. After
 propagation, however, the band with the fewest fillings still has a median of 888 of them on the hardest set (2{,}054
 for the middle band), so the join alone is millions of pairs.
+
+\paragraph{Fewer mispredicted branches.} After the design above, we tried to remove the branches behind its
+mispredictions (\cref{sec:why}), each change timed against the unchanged solver in 7 alternating runs per data set on
+the M4, with identical guess counts and, where the change touched the propagation, the full check of
+\cref{sec:proofs}. Placing row singles without first testing whether any row is new (the step then does nothing when
+none is): 0.998--1.005 times the original time over the five sets. Running the stack rule on every band update instead
+of only when the columns change: 0.997--1.003. Collecting the changed (digit, band) pairs into a bit mask once per pass
+and visiting only those, instead of testing all 27: 0.999--1.003. Choosing the best two-candidate cell without a
+branch: 0.999--1.004. Each removes mispredictions but adds back as much, in work that the branch used to skip or in new
+branches; the code is at a balance point. Profile-guided optimization, which lets the compiler lay out branches from a
+recorded run, changed the hard sets by $+$0.2--0.5\% and saved 1--2\% on 17-clue and kaggle, too little to be
+worth a compiler-specific build.
 
 \section{Discussion}
 
