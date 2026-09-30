@@ -85,16 +85,20 @@ double secondsSince(std::chrono::steady_clock::time_point start) {
 }
 
 
-// clock speed in GHz: 2^27 iterations of 16 dependent one-cycle adds; the loop's own counter and branch run alongside
+// clock speed in GHz: 2^27 iterations of 16 dependent one-cycle register adds; the loop's own counter and branch
+// run alongside. The addend is a register the compiler cannot see through: Intel cores since Golden Cove fold chains
+// of add-immediate while renaming, which made the same chain with a constant run about 5 times faster than the clock
+volatile uint64_t addend = 1;
+
 double clockGHz() {
-	uint64_t x = 0;
+	uint64_t x = 0, y = addend;
 	constexpr long iterations = 1L << 27;
 	auto start = std::chrono::steady_clock::now();
 	for (long i = 0; i < iterations; i++) {
 #if defined(__x86_64__)
-		asm volatile(".rept 16\n\taddq $1, %0\n\t.endr" : "+r"(x));
+		asm volatile(".rept 16\n\taddq %1, %0\n\t.endr" : "+r"(x) : "r"(y));
 #elif defined(__aarch64__)
-		asm volatile(".rept 16\n\tadd %0, %0, #1\n\t.endr" : "+r"(x));
+		asm volatile(".rept 16\n\tadd %0, %0, %1\n\t.endr" : "+r"(x) : "r"(y));
 #endif
 	}
 	return 16.0 * iterations / secondsSince(start) / 1e9;

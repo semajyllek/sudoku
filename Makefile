@@ -128,6 +128,10 @@ $(BUILD)/sota/parallel: bench/parallel.cpp parallelbandsolver.hpp fastbandsolver
 $(BUILD)/sota/counters: bench/counters.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
 
+# the same on Apple Silicon through kperf (run with sudo)
+$(BUILD)/sota/m4counters: bench/m4counters.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
+
 $(BUILD)/sota/throughput: bench/throughput.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
 
