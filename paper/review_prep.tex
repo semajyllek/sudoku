@@ -1,0 +1,153 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[hyphens]{url}
+\sloppy
+
+\title{FastBandSolver: review preparation}
+\date{}
+
+\begin{document}
+\maketitle
+
+Questions a reviewer is likely to ask, with prepared answers. Numbers are from the paper's measurements (Apple M4
+Max, the run after the row-single fix) and tdoku's published results for an Intel Core i7-1065G7.
+
+\section*{Is most of the benefit just running the tdoku algorithm on an M4 Max?}
+
+No. There are two separate effects, and on the hard puzzles they matter about equally.
+
+First, FastBandSolver does not run tdoku's algorithm. tdoku uses 256-bit SIMD with triads and message passing;
+FastBandSolver is JCZSolve's scalar band engine plus three changes (peer-count branching, the stack rule and a
+fewest-candidates fallback). tdoku itself gets slower on the M4, about 0.88 times its published Intel speed on the hard
+sets.
+
+On forum hardest 1106, with each solver's speed relative to tdoku on the same machine:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+ & speed relative to tdoku \\
+\midrule
+JCZSolve on Intel (published) & 0.41$\times$ \\
+JCZSolve on M4 (measured) & 0.68$\times$ \\
+our engine with the three changes switched off, on M4 & 0.62$\times$ \\
+FastBandSolver on M4 & \textbf{1.17$\times$} \\
+FastBandSolver on Intel (projected) & 0.70$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+\item \textbf{The platform effect, about 1.7$\times$.} Moving from Intel to the M4 lifts the scalar design from 0.41 to
+  0.68 of tdoku's speed, because scalar code gains on the M4 and tdoku does not.
+\item \textbf{The algorithmic changes, about 1.7--1.9$\times$.} Peer-count branching, the stack rule and the
+  fewest-candidates fallback take it from 0.62--0.68 to 1.17.
+\item \textbf{Neither alone is enough.} JCZSolve on the M4 still loses to tdoku (0.68$\times$), and the changes
+  projected onto Intel still lose (0.70$\times$). Both are needed.
+\end{itemize}
+
+On the other data sets:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+data set & platform shift & algorithm gain (vs JCZSolve on M4) \\
+\midrule
+magictour top 1465 & 1.56$\times$ & 1.45$\times$ \\
+forum hardest 1905 11+ & 1.67$\times$ & 1.40$\times$ \\
+17 clue & 1.62$\times$ & 1.33$\times$ \\
+kaggle & 1.63$\times$ & 1.36$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+On 17-clue the platform alone is enough: JCZSolve already beats tdoku there on the M4 (1.22$\times$), so the
+algorithmic changes add margin rather than create the win.
+
+\paragraph{Caveat.} The platform figure is the least robust. The Intel numbers are tdoku's published ones, from a
+different machine and benchmark program, each the best of over a dozen compiler configurations, so ``about
+1.7$\times$'' is a cross-machine estimate. The algorithmic figure was measured on the same machine with interleaved
+runs.
+
+\paragraph{Summary for the paper.} The M4 closes most of the gap between scalar band solvers and tdoku, and the
+algorithmic changes close the rest and pull ahead. The paper states this across Sections 6.1 and 7; it could be
+stated in one paragraph in the discussion.
+
+
+\section*{Has anybody done this before?}
+
+We searched GitHub, the Sudoku Players' Forum (forum.enjoysudoku.com, down during the search, so read through
+incomplete Wayback Machine snapshots), arXiv and the constraint-programming literature, in September 2026. Two 2026
+projects are close relatives; neither does what we do, but both must be cited.
+
+\paragraph{Solvers claimed to be faster than tdoku.}
+\begin{itemize}
+\item \textbf{fastdoku} (rocketbombs, August 2026, \url{github.com/rocketbombs/fastdoku}). A Rust solver that combines
+  a JCZSolve-style band engine with a port of tdoku's triad engine, choosing per puzzle. It claims 1.06--1.63$\times$
+  over the faster of tdoku and rust\_sudoku on all eight of tdoku's corpora, on x86. Its benchmark is \emph{time to
+  first solution} (limit 1) on both sides, so it is consistent but not comparable to our limit-2 results. Its README
+  says its lead is x86-specific; on ARM it has a NEON port of its triad engine but compares only against rust\_sudoku,
+  stating that tdoku cannot be built on ARM. It is the closest prior work.
+\item \textbf{RKCR7 / autoresearch-sudoku} (Rkcr7, March 2026,
+  \url{github.com/Rkcr7/autoresearch-sudoku}). A Rust
+  JCZSolve-family solver built by an AI coding agent, claiming to beat tdoku on 4 of 6 data sets on an AMD Ryzen with
+  AVX-512. Its \texttt{solve()} stops at the first solution, while tdoku was run through tdoku's own benchmark program,
+  which checks uniqueness (limit 2) by default. We confirmed this from its log: tdoku made 61.67 guesses per puzzle on
+  forum hardest 1905 11+, exactly tdoku's count at limit 2 on our machine (34.17 at limit 1). So its comparison is
+  first solution against uniqueness check, which favors it; the README does not say so.
+\item \textbf{gz\_sudoku} (shines77, 2021--2024): a C++ rewrite of JCZSolve; its README concedes tdoku is fastest on
+  hard puzzles.
+\end{itemize}
+We found no claim of beating tdoku with a uniqueness check (limit 2), on any platform.
+
+\paragraph{tdoku on ARM.} Besides the SIMDe-based fork we already cite, fastdoku ports tdoku's \emph{design} to NEON
+in Rust (not tdoku's code), and a Rust port (brki/rust-tdoku) runs on ARM with scalar fallbacks only. We found no
+native NEON build of tdoku itself other than ours, and no benchmark of tdoku, JCZSolve or fsss2 on bare-metal Apple
+Silicon or other ARM servers.
+
+\paragraph{Our three changes.}
+\begin{itemize}
+\item \textbf{Peer-count branching} (the two-candidate cell with the most unsolved peers): this is the classic
+  \emph{degree} tie-break for minimum remaining values (Br\'elaz 1979), and it has been evaluated on Sudoku in generic
+  constraint solvers (a 2015 Groningen bachelor's thesis by Bakker; an arXiv paper, DiBS, 2026). No precedent found in
+  a fast solver. Every band solver we read (JCZSolve, rust\_sudoku, RKCR7, fastdoku) branches on the first two-candidate
+  cell; fsss2 has related experimental strategies, off by default. Degree-style heuristics are standard in constraint
+  programming in general.
+\item \textbf{Stack rule} (bands matched to columns within each stack): the constraint itself is in Simonis,
+  ``Sudoku as a Constraint Problem'' (2005), Section 5.3, which gives the rows--blocks matching (our band rule) and
+  notes the columns--blocks version (our stack rule), solved with a general matching algorithm. We read the paper to
+  confirm. What is new is applying it by table lookup in a scalar band solver; tdoku reaches the same deductions
+  through its vertical-band configurations.
+\item \textbf{Fewest-candidates fallback}: near precedent. RKCR7 and fastdoku take the fewest-candidate cell among the
+  first unsolved cell of each band, rust\_sudoku checks up to three cells, and the rule itself is classic
+  minimum-remaining-values.
+\end{itemize}
+The \emph{band} rule (rows matched to boxes within a band) is not new: fastdoku presents its exact version as a
+strengthening over JCZSolve, but we checked JCZSolve's table (\texttt{TblComplexMask}) against the perfect-matching
+definition on all 512 patterns and it is identical, so JCZSolve already had it. The single lookup table for row singles
+also appears to be new; rust\_sudoku and RKCR7 combine two tables as JCZSolve does.
+
+\paragraph{Academic work.} A second search covered arXiv (all 54 results for ``sudoku solver''), the CP and SAT
+literature and theses; Semantic Scholar, DBLP and some publishers' pages were blocked. No paper proposes a fast
+9$\times$9 solver or benchmarks against tdoku, JCZSolve or fsss2; papers that mention tdoku use it only to rate puzzle
+difficulty (for example the Hierarchical Reasoning Model paper, 2025). Eppstein (FUN 2012) solves single-digit
+subproblems faster than the pattern overlay method, which supports our template negative result, and Simonis's
+\emph{shaving} is the lookahead we found too costly. We found no study comparing Sudoku solvers across processor
+families, and none on branching heuristics under a uniqueness requirement.
+
+\paragraph{What we can claim.} The first result, as far as we can find, of a solver beating tdoku with a uniqueness
+check (limit 2), measured against tdoku's own code on the same machine; the first use of Simonis's stack constraint and
+of the degree tie-break in a fast band solver, with measurements of each; and the first native NEON build of tdoku. The
+rules and the heuristic themselves are not ours. We cannot claim to be first to beat tdoku
+under any setting (fastdoku does, at limit 1 on x86), first with an exact band rule (JCZSolve), or first with a
+fewest-candidates fallback.
+
+\paragraph{Limits of the search.} The forum was offline and its archive incomplete after 2019, so forum-only work on
+guess strategies may exist that we could not see, and closed-source solvers could not be checked.
+
+\paragraph{Action for the paper.} Cite fastdoku and RKCR7 in the related work, with the limit-1 caveat for both and the
+mismatched baseline for RKCR7.
+
+\end{document}

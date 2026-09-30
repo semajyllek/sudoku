@@ -344,10 +344,13 @@ template <int B> [[gnu::always_inline]] inline bool FastBandSolver::updateBand(S
 	unsigned newly = single & open;
 	if (newly) {
 		Mask placed = cells & ROWS_CELLS[newly];  // one cell per newly single row
-		// take the placed cells from every digit of the band, then give this digit its cells back: cheaper than
-		// testing "other != digit" in the loop
+		// take the placed cells from every digit of the band, then give this digit its mask back: cheaper than
+		// testing "other != digit" in the loop. Restore the mask as it is now, not cells: the stack rule above may
+		// have removed more of it, and restoring cells would put those candidates back. Masks must only shrink;
+		// the correctness proof relies on it (an earlier version had this bug, which no test caught)
+		Mask own = s.cells[i];
 		for (int other = 0; other < 9; other++) s.cells[other * 3 + B] &= ~placed;
-		s.cells[i] = cells;
+		s.cells[i] = own;
 		s.unsolved[B] &= ~placed;
 		s.openRows[digit] &= ~(newly << (B * 3));
 	}
