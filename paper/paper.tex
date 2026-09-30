@@ -6,6 +6,7 @@
 \usepackage{microtype}
 \usepackage{siunitx}
 \usepackage{tikz}
+\usepackage{float}
 \usepackage{algorithm}
 \usepackage[noend]{algpseudocode}
 \usepackage[hidelinks]{hyperref}
@@ -804,7 +805,7 @@ table & entries & contents \\
 the positions of the two other bands are constants. It is also forced \emph{inline}: its code is copied into the update
 loop instead of being called as a function, which avoids the cost of a call.
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{\textsc{UpdateBand}$_b(S, d)$: band rule, stack rule and row singles for digit $d$ in band $b$}
 \label{alg:band}
 \begin{algorithmic}[1]
@@ -873,7 +874,7 @@ row 2, column 8, and those two cells are removed from the other eight digits.
 
 \subsection{The stack rule}
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{\textsc{StackRule}$(S, d)$}
 \label{alg:stack}
 \begin{algorithmic}[1]
@@ -898,7 +899,7 @@ stacks whose columns changed produced the same tree but was 19\% slower, because
 
 \subsection{The update loop and propagation}
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{\textsc{Update}$(S)$ and \textsc{Propagate}$(S)$}
 \label{alg:propagate}
 \begin{algorithmic}[1]
@@ -958,7 +959,7 @@ more candidates, and \emph{open} with the two-candidate cells otherwise.
 
 \subsection{Search and branching}
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{\textsc{Search}$(S_t)$ at depth $t$}
 \label{alg:search}
 \begin{algorithmic}[1]
