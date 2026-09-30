@@ -1,0 +1,71 @@
+# hardware counters (bench/counters.cpp) on GitHub's x86 runners, if the virtual machine exposes them
+name: x86 counters
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [sota-comparison]
+    paths: [.github/workflows/counters.yml]
+
+jobs:
+  counters:
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      CXX: clang++
+      CC: clang
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sudoku
+      - uses: actions/checkout@v4
+        with:
+          repository: semajyllek/TinyBitSet
+          path: tinybitset
+      - uses: actions/checkout@v4
+        with:
+          repository: semajyllek/tdoku
+          ref: arm-neon
+          path: tdoku
+
+      - name: counters
+        working-directory: sudoku
+        run: |
+          {
+            echo "=== MACHINE"
+            lscpu | grep -E '^Model name|^CPU\(s\)|Thread|^Core'
+            echo "flags: $(grep -o -w -E 'avx2|avx512[a-z_0-9]*' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+            echo "paranoid: $(cat /proc/sys/kernel/perf_event_paranoid)"
+            clang++ --version | head -1
+          } | tee ../counters.txt
+          sudo sysctl -w kernel.perf_event_paranoid=-1 >/dev/null || true
+          make -s build/sota/counters build/sota_data/unpacked >/dev/null 2>&1
+          make -s build/sota/counters build/sota_data/unpacked BUILD=build_v3 SOTA_FLAGS="-O3 -march=x86-64-v3" >/dev/null 2>&1
+          D=build/sota_data/data
+          for round in 1 2; do
+            for build in build build_v3; do
+              for solver in fastband tdoku jsolve; do
+                for set in "puzzles6_forum_hardest_1106 20" "puzzles2_17_clue 5"; do
+                  echo "=== COUNTERS $build round $round" | tee -a ../counters.txt
+                  ./$build/sota/counters $solver $D/$set 2>&1 | tee -a ../counters.txt || true
+                done
+              done
+            done
+          done
+
+      - name: summary
+        if: always()
+        run: |
+          { echo '```'; head -40 counters.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: counters-${{ matrix.sample }}
+          path: counters.txt
