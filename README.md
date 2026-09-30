@@ -57,11 +57,11 @@ solves every puzzle correctly. from `make sota`:
 
   data set | puzzles | fastbandsolver | sudokusolver | tdoku | jsolve | kudoku
   --- | --- | --- | --- | --- | --- | ---
-  17 clue | 49158 | 1.8 × 10⁻⁶ | 1.7 × 10⁻⁵ | 3.0 × 10⁻⁶ | 3.0 × 10⁻⁶ | 1.5 × 10⁻⁵
-  magictour top 1465 | 1465 | 7.1 × 10⁻⁶ | 7.1 × 10⁻⁵ | 8.6 × 10⁻⁶ | 1.3 × 10⁻⁵ | 6.6 × 10⁻⁵
-  forum hardest 1106 | 375 | 6.3 × 10⁻⁵ | 5.1 × 10⁻⁴ | 7.6 × 10⁻⁵ | 1.5 × 10⁻⁴ | 5.7 × 10⁻⁴
-  forum hardest 1905 11+ | 48766 | 4.0 × 10⁻⁵ | 2.8 × 10⁻⁴ | 4.7 × 10⁻⁵ | 9.1 × 10⁻⁵ | 2.7 × 10⁻⁴
-  kaggle | 100000 | 8.6 × 10⁻⁷ | 1.6 × 10⁻⁶ | 9.4 × 10⁻⁷ | 1.6 × 10⁻⁶ | 7.6 × 10⁻⁶
+  17 clue | 49158 | 1.64 × 10⁻⁶ | 1.53 × 10⁻⁵ | 2.63 × 10⁻⁶ | 2.71 × 10⁻⁶ | 1.33 × 10⁻⁵
+  magictour top 1465 | 1465 | 6.29 × 10⁻⁶ | 6.23 × 10⁻⁵ | 7.48 × 10⁻⁶ | 1.15 × 10⁻⁵ | 5.84 × 10⁻⁵
+  forum hardest 1106 | 375 | 5.70 × 10⁻⁵ | 4.50 × 10⁻⁴ | 6.69 × 10⁻⁵ | 1.35 × 10⁻⁴ | 5.09 × 10⁻⁴
+  forum hardest 1905 11+ | 48766 | 3.77 × 10⁻⁵ | 2.59 × 10⁻⁴ | 4.39 × 10⁻⁵ | 8.47 × 10⁻⁵ | 2.55 × 10⁻⁴
+  kaggle | 100000 | 8.24 × 10⁻⁷ | 1.51 × 10⁻⁶ | 8.90 × 10⁻⁷ | 1.49 × 10⁻⁶ | 7.18 × 10⁻⁶
 
 - [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver on hard puzzles in its own benchmark of the
   fastest known solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)

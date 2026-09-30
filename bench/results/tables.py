@@ -34,7 +34,7 @@ def summary():
         if path.endswith('.py') or path.endswith('.md'): continue
         for (label, limit), sets in load(path).items():
             print(os.path.basename(path), label, 'limit', limit, ' '.join('%.2f' % ratio(sets[s]) for s in SETS if s in sets),
-                  '| 1106 us:', ' '.join('%s %.1f' % (k[:5], v * 1e6) for k, v in sets.get(SETS[2], {}).items()))
+                  '| 1106 s:', ' '.join('%s %.2e' % (k[:5], v) for k, v in sets.get(SETS[2], {}).items() if '/' not in k))
 
 
 # the paper's tables: (label, vector extensions, source file, block label), limit 2 unless noted

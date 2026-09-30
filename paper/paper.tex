@@ -1410,7 +1410,9 @@ forum hardest 1106 & \num{7.24e-5} & \num{9.49e-5} & \num{2.199e-4} \\
 \end{table}
 
 \paragraph{What the port cannot recover.} NEON registers are 128 bits wide, so on the M4 tdoku runs its 256-bit
-operations as two 128-bit ones, as on x86 without AVX2; the fastest published tdoku results use AVX2 or AVX-512.
+operations as two 128-bit ones, as on x86 without AVX2; the fastest published tdoku results use AVX2 or AVX-512. Width is not the whole story,
+though: on AMD's Zen~3, which runs tdoku's 256-bit vectors natively, FastBandSolver still keeps level with it
+(\cref{sec:x86}).
 
 
 \section{Results}
@@ -1598,7 +1600,7 @@ We ran \texttt{make sota} on x86 machines rented by the hour: GitHub's hosted ru
 machines, and Google Cloud spot virtual machines, each with 4 virtual CPUs (two cores with two hardware threads each).
 All ran Ubuntu, built every solver with clang and \texttt{-O3 -march=native}, and took the median of 5 interleaved
 runs. On every machine every solver solved every puzzle correctly, and FastBandSolver's tests passed. We did not choose
-the GitHub runners' processors: two runs of four jobs landed on three processor models. JCZSolve is left out, as in
+the GitHub runners' processors: the four jobs of the run we report landed on three processor models. JCZSolve is left out, as in
 \texttt{make sota}. The raw output, and the script that builds these tables from it, are in \texttt{bench/results}.
 Rented virtual machines are noisier than a dedicated one, but the two jobs on the same processor model with different
 compilers agree to within 0.05 in every ratio, and repeated runs on one machine to within 0.01.
@@ -1607,7 +1609,7 @@ compilers agree to within 0.05 in every ratio, and repeated runs on one machine 
 \centering
 \caption{FastBandSolver's speed relative to tdoku (tdoku's time divided by FastBandSolver's) on x86 machines,
 limit 2 except the last column, with the M4 Max for comparison; above 1, FastBandSolver is faster. The vector column
-gives the widest extensions tdoku's build could use. Each row is one run of \texttt{make sota} (median of 5
+gives the vector extensions available to tdoku's build. Each row is one run of \texttt{make sota} (median of 5
 interleaved runs); the two Zen~3 rows are GitHub jobs with different compilers. The second Zen~4 machine ran limit 2
 only.}
 \label{tab:x86}
@@ -1683,8 +1685,8 @@ AMD EPYC 9B14 (Zen 4) & 1.06--1.07 & 0.92--0.95 & 0.96--0.99 \\
 \end{table}
 
 \paragraph{How much is AVX-512?} tdoku never uses 512-bit registers. Its vectors are 128 and 256 bits wide, but when
-the compiler targets AVX-512 it uses the newer instructions on those widths: three-input logic, comparisons into mask
-registers, and a vector bit count (\texttt{AVX512VL}, \texttt{AVX512BW} and \texttt{AVX512VPOPCNTDQ}). To measure what
+the compiler targets AVX-512 it uses newer instructions on those widths, such as three-input logic, comparisons into mask
+registers and vector bit counts. To measure what
 they are worth, we built tdoku with and without them on the same machine (\cref{tab:avx512}; an Ice Lake spot machine
 was reclaimed before it finished). Without AVX-512, tdoku is 12--13\% slower on Sapphire Rapids and 6--7\% slower on
 Zen~4. That is only part of the gap: without AVX-512, FastBandSolver still reaches only 0.78--0.81 times tdoku's speed
