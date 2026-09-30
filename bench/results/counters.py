@@ -34,7 +34,65 @@ def parse(path):
     return model, {k: {m: sum(v) / len(v) for m, v in d.items()} for k, d in out.items()}
 
 
+def cycles(d):
+    return d['cycles'] if 'cycles' in d else d['seconds'] * d['clock'] * 1e9
+
+
+# the paper's tables: (label, vector extensions of the native build, log files); all on forum hardest 1106, limit 2
+HARD = 'puzzles6_forum_hardest_1106'
+MACHINES = [
+    ('AMD EPYC 7B13 (Zen~3)', 'AVX2', ['gcp-c2d-zen3.txt', 'gcp-c2d-zen3-2.txt']),
+    ('AMD EPYC 7763 (Zen~3)', 'AVX2', ['github-*-epyc-7763.txt']),
+    ('AMD EPYC 9B14 (Zen~4)', 'AVX-512', ['gcp-c3d-zen4.txt']),
+    ('AMD EPYC 9V74 (Zen~4)', 'AVX-512', ['github-*-epyc-9v74.txt']),
+    ('AMD EPYC 9V45 (Zen~5)', 'AVX-512', ['github-*-epyc-9v45.txt']),
+    ('Intel Xeon (Ice Lake)', 'AVX-512', ['gcp-n2-icl.txt']),
+    ('Intel Xeon 8481C (Sapphire Rapids)', 'AVX-512', ['gcp-c3-spr.txt']),
+    ('Intel Xeon 8573C (Emerald Rapids)', 'AVX-512', ['github-*-xeon-8573c.txt']),
+    ('Intel Xeon 8581C (Emerald Rapids)', 'AVX-512', ['gcp-c4-emr-perf.txt', 'gcp-c4-emr-perf-2.txt']),
+]
+COUNTED = 'gcp-c4-emr-perf*.txt'  # instructions for the x86 builds come from here: same binary, same instructions
+
+
+def machine(files, here):
+    # mean cycles per (build, solver) over every file and round
+    acc = defaultdict(list)
+    for pattern in files:
+        for f in glob.glob(os.path.join(here, 'counters', pattern)):
+            for (build, solver, s), d in parse(f)[1].items():
+                if s == HARD: acc[(build, solver)].append(cycles(d))
+    return {k: sum(v) / len(v) for k, v in acc.items()}, sum(len(glob.glob(os.path.join(here, 'counters', p))) for p in files)
+
+
+def paper(here):
+    instr = defaultdict(list)
+    miss = defaultdict(list)
+    for f in glob.glob(os.path.join(here, 'counters', COUNTED)):
+        for (build, solver, s), d in parse(f)[1].items():
+            if s == HARD:
+                instr[(build, solver)].append(d['instructions'])
+                miss[(build, solver)].append(d['branch-misses'])
+    instr = {k: sum(v) / len(v) for k, v in instr.items()}
+    miss = {k: sum(v) / len(v) for k, v in miss.items()}
+    k = lambda x: '%.0fk' % (x / 1000)
+    print('% tab:cycles rows: cycles per puzzle (AVX2 build), IPC, FastBand/tdoku; then native build')
+    for name, ext, files in MACHINES:
+        c, n = machine(files, here)
+        if not c: continue
+        fv, tv = c[('build_v3', 'fastband')], c[('build_v3', 'tdoku')]
+        fn, tn = c[('build', 'fastband')], c[('build', 'tdoku')]
+        fi, ti = instr[('build_v3', 'fastband')], instr[('build_v3', 'tdoku')]
+        print(f'{name} & {k(fv)} & {k(tv)} & {fi / fv:.2f} & {ti / tv:.2f} & {tv / fv:.2f} & {k(fn)} & {k(tn)} & {tn / fn:.2f} \\\\  % {n} logs')
+    print('% instructions and branch mispredictions per puzzle on x86 (from the counted machine)')
+    for b in ('build_v3', 'build'):
+        print(b, ' '.join('%s %.0f (%.0f misses, MPKI %.2f)' % (s, instr[(b, s)], miss[(b, s)], 1000 * miss[(b, s)] / instr[(b, s)])
+                          for s in ('fastband', 'tdoku', 'jsolve')))
+
+
 if __name__ == '__main__':
+    if sys.argv[1:] == ['paper']:
+        paper(os.path.dirname(os.path.abspath(__file__)))
+        sys.exit()
     for path in sys.argv[1:]:
         model, data = parse(path)
         print('##', os.path.basename(path), model)

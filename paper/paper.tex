@@ -56,8 +56,10 @@ five of tdoku's standard data sets, including 1.17$\times$ on the 375 hardest fo
 1) it is also fastest on all five, by 1.07--1.61$\times$. An ablation attributes
 the gain mainly to branching: the search makes 138 guesses per puzzle on that set where JCZSolve makes 363. On x86 the result depends on the processor. Measured on seven x86 cloud machines, FastBandSolver is level with or
 faster than tdoku on AMD Zen~3 (1.00--1.47$\times$), slightly slower on the hard sets on AMD Zen~4 (0.92--0.96$\times$),
-and about 0.7 times tdoku's speed on Intel Ice Lake and Sapphire Rapids. Building tdoku without AVX-512 explains only
-part of the Intel gap: most of it comes from the processor core itself. On many cores, running one puzzle per core, FastBandSolver also has the
+and about 0.7 times tdoku's speed on Intel Ice Lake and Sapphire Rapids. Hardware counters show why: on x86, tdoku
+needs 0.60--0.67 times FastBandSolver's instructions, against 1.29 times on the M4, where its 256-bit operations
+become pairs of NEON instructions; on the same x86 binary, Intel cores run tdoku's code faster per cycle than AMD's,
+and AVX-512 saves it another 12\% of its cycles. On many cores, running one puzzle per core, FastBandSolver also has the
 highest throughput at every core count; a parallel version that splits one puzzle's search between threads solves the
 hardest puzzles $2.1\times$ faster on 4 threads. We also report six approaches that did not beat tdoku, with measurements: template (pattern-overlay) search, several search-tree nodes in SIMD lanes, interleaving sibling branches, lookahead
 probing, triad rules, and joining band fillings.
@@ -93,7 +95,8 @@ perfect matchings. Our contributions:
   (\cref{prop:hidden}).
 \item \textbf{Measurements on x86} (\cref{sec:x86}): on seven cloud machines FastBandSolver is level with or
   faster than tdoku on AMD Zen~3, slightly slower on Zen~4 and about 0.7 times its speed on recent Intel processors,
-  and a build of tdoku without AVX-512 shows how much of that its AVX-512 code accounts for.
+  and hardware counters and cycle measurements on ten processors separate the instruction set, the core and
+  AVX-512 as causes (\cref{sec:why}).
 \item \textbf{Proofs} (\cref{sec:rules,sec:proofs}) that the rules are sound and that the solver counts solutions
   exactly, terminates, and stays within its fixed array of states.
 \item An \textbf{ablation}, switching each of our changes off in turn, (\cref{tab:ablation}) showing that branching, not propagation, carries most of the gain:
@@ -1637,7 +1640,7 @@ Intel Xeon 8481C (Sapphire Rapids) & AVX-512 & 1.05 & 0.73 & 0.71 & 0.70 & 0.80 
 \begin{table}[t]
 \centering
 \caption{Seconds per puzzle on forum hardest 1106, limit 2, on the machines of \cref{tab:x86}. Clock speeds differ
-between the machines and were not recorded, so comparisons between rows are rough.}
+between the machines, so comparisons between rows are rough; \cref{tab:cycles} compares cycles instead.}
 \label{tab:x86times}
 \small
 \begin{tabular}{lrrrr}
@@ -1690,16 +1693,114 @@ registers and vector bit counts. To measure what
 they are worth, we built tdoku with and without them on the same machine (\cref{tab:avx512}; an Ice Lake spot machine
 was reclaimed before it finished). Without AVX-512, tdoku is 12--13\% slower on Sapphire Rapids and 6--7\% slower on
 Zen~4. That is only part of the gap: without AVX-512, FastBandSolver still reaches only 0.78--0.81 times tdoku's speed
-on the hard sets on Sapphire Rapids, against 1.00--1.06 on Zen~3, which also lacks AVX-512.
+on the hard sets on Sapphire Rapids, against 1.00--1.06 on Zen~3, which also lacks AVX-512. \Cref{sec:why} accounts for the rest.
 
-The rest comes from the processor cores. Comparing absolute times across machines is rough, since their clock speeds
-differ, but the direction is clear: on the hardest set (\cref{tab:x86times}) tdoku is 1.2--1.4 times faster on the
-Intel machines than on Zen~3, while FastBandSolver, jsolve and kudoku are 6--22\% slower there. The scalar
-solvers are chains of dependent table lookups and data-dependent branches; tdoku is mostly independent vector
-operations. On these Intel cores the second kind of code does relatively better. We did not measure branch
-mispredictions, cache misses or clock speeds on x86, so which features of the cores are responsible remains open.
-What the measurements do show is that there is no single ranking across machines: whether a scalar band solver with
-a small search tree beats tdoku's SIMD propagation depends on the processor.
+\subsection{Why: instructions and cycles}
+\label{sec:why}
+
+Time per puzzle is instructions per puzzle divided by instructions per cycle (IPC), divided by the clock speed. The
+clock differs from machine to machine and says nothing about the code, so we compare cycles. We measured them with
+\texttt{bench/counters.cpp}, which counts cycles, instructions, branches and branch mispredictions around the solve
+loop through Linux's \texttt{perf\_event\_open}, and with \texttt{bench/m4counters.cpp}, which counts the same events
+on the M4 through Apple's \texttt{kperf}.
+
+Most rented machines expose no hardware counters: of the types we tried, only Google Cloud's \texttt{c4} (Intel Emerald
+Rapids) does. Elsewhere we derive cycles and IPC from two facts. First, the harness estimates the clock before and
+after the solve loop by timing $2^{31}$ dependent register additions, each of which takes one cycle; cycles are time
+times clock. (An addition of a constant would not do: Intel cores since Golden Cove fold chains of those while
+renaming registers, which made our first version read about 20\,GHz.) On the \texttt{c4} the estimate (3.276\,GHz)
+agrees with the cycle counter (3.26--3.27\,GHz), and on the M4 with the cycles that \texttt{/usr/bin/time -l}
+reports (4.42\,GHz). Zen~3 runners on GitHub
+at 3.21\,GHz and on Google Cloud at 3.46\,GHz give the same cycles per puzzle to within 3\%, and Sapphire and Emerald
+Rapids, which share a core design, agree to within 1\%. Second, the same binary on the same puzzles retires the same
+instructions on any x86 processor, so instructions counted on the \texttt{c4} apply to all of them (three \texttt{c4}
+machines retired identical counts, 665{,}706 per puzzle for FastBandSolver). For this we build every solver a second
+time with \texttt{-march=x86-64-v3} (AVX2, no AVX-512): one binary, one instruction stream, on every x86 machine.
+
+\begin{table}[t]
+\centering
+\caption{Instructions per puzzle on forum hardest 1106, limit 2, for each build of each solver, and branch
+mispredictions per thousand instructions (MPKI). ARM counts are from the M4, x86 counts from the Emerald Rapids
+\texttt{c4}; the AVX2 build is the same binary on every x86 machine. The M4's mispredictions are not yet measured.}
+\label{tab:instructions}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+& \multicolumn{3}{c}{instructions per puzzle} & \multicolumn{2}{c}{MPKI} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-6}
+solver & ARM (NEON) & x86 AVX2 & x86 AVX-512 & M4 & x86 \\
+\midrule
+FastBandSolver & 594k & 692k & 666k & -- & 9.6--10.0 \\
+tdoku & 768k & 460k & 401k & -- & 4.2--4.8 \\
+jsolve & 1{,}520k & 1{,}641k & 1{,}637k & -- & 10.9--11.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Cycles per puzzle and IPC on forum hardest 1106, limit 2. Left: the AVX2 build, the same instructions on every
+x86 machine (\cref{tab:instructions}). Right: the build for each machine (\texttt{-march=native}), which uses AVX-512
+where the processor has it. The ratio is tdoku's cycles over FastBandSolver's: above 1, FastBandSolver is faster. Each
+row averages every log for that processor (two rounds each); cycles are counted on the M4 and the \texttt{c4}
+(8581C) and derived from time and the measured clock elsewhere.}
+\label{tab:cycles}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{5}{c}{AVX2 build} & \multicolumn{3}{c}{native build} \\
+\cmidrule(lr){2-6} \cmidrule(lr){7-9}
+& \multicolumn{2}{c}{cycles} & \multicolumn{2}{c}{IPC} & & \multicolumn{2}{c}{cycles} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){7-8}
+processor & FastBand & tdoku & FastBand & tdoku & ratio & FastBand & tdoku & ratio \\
+\midrule
+Apple M4 Max & & & & & & 254k & 299k & 1.18 \\
+\midrule
+AMD EPYC 7B13 (Zen~3) & 314k & 305k & 2.20 & 1.51 & 0.97 & 300k & 304k & 1.01 \\
+AMD EPYC 7763 (Zen~3) & 322k & 306k & 2.15 & 1.51 & 0.95 & 301k & 304k & 1.01 \\
+AMD EPYC 9B14 (Zen~4) & 298k & 286k & 2.32 & 1.61 & 0.96 & 291k & 268k & 0.92 \\
+AMD EPYC 9V74 (Zen~4) & 309k & 285k & 2.24 & 1.61 & 0.92 & 290k & 276k & 0.95 \\
+AMD EPYC 9V45 (Zen~5) & 319k & 320k & 2.17 & 1.44 & 1.00 & 306k & 289k & 0.94 \\
+Intel Xeon (Ice Lake) & 352k & 268k & 1.96 & 1.72 & 0.76 & 347k & 235k & 0.68 \\
+Intel Xeon 8481C (Sapphire Rapids) & 328k & 262k & 2.11 & 1.76 & 0.80 & 325k & 230k & 0.71 \\
+Intel Xeon 8573C (Emerald Rapids) & 342k & 261k & 2.02 & 1.76 & 0.76 & 328k & 229k & 0.70 \\
+Intel Xeon 8581C (Emerald Rapids) & 330k & 259k & 2.10 & 1.77 & 0.79 & 327k & 229k & 0.70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:instructions,tab:cycles} separate three effects.
+
+\paragraph{Instructions depend on the instruction set, and tdoku's most of all.} tdoku retires 768 thousand
+instructions per puzzle on the M4, 1.67 times its 460 thousand with AVX2 and 1.91 times its 401 thousand with
+AVX-512: NEON has no 256-bit registers, so each of tdoku's 256-bit operations becomes two instructions, and some x86
+operations, such as extracting a bit mask from a vector, take several NEON instructions. FastBandSolver's scalar code
+goes the other way, 594 thousand instructions on ARM against 666--692 thousand on x86, as does jsolve's (1.52 million
+against 1.64 million). So on x86 tdoku needs 0.60--0.67 times FastBandSolver's instructions, and on the M4 1.29 times.
+This is where vector width matters.
+
+\paragraph{On the same instructions, Intel cores favour tdoku.} With the identical AVX2 binary, tdoku runs at an IPC of
+1.72--1.77 on the four Intel processors against 1.44--1.61 on the five AMD ones, while FastBandSolver runs at 1.96--2.11
+on Intel against 2.15--2.32 on AMD, and jsolve, the other scalar solver, shows the same pattern. FastBandSolver's IPC is
+higher than tdoku's everywhere, by 1.39--1.51 times on AMD, enough to cover tdoku's 1.50 times fewer instructions, and
+by only 1.14--1.20 times on Intel, which is not. On AMD the two take about the same cycles (ratio 0.92--1.00); on Intel
+tdoku takes 20--24\% fewer. We have not isolated which features of the Intel cores run tdoku's instruction stream
+faster per cycle; the counters say only that they do, and by how much.
+
+\paragraph{AVX-512 adds to tdoku's lead on Intel.} The native build removes 12\% of tdoku's cycles on all four Intel
+processors and 3--10\% on Zen~4 and Zen~5, and changes FastBandSolver's by at most 7\%. On Intel the ratio falls from
+0.76--0.80 to 0.68--0.71, the measured speed ratio of \cref{tab:x86}.
+
+\paragraph{Branch mispredictions.} FastBandSolver mispredicts 6{,}600 branches per puzzle on the hardest set, 3.4 times
+tdoku's 1{,}900 (on the \texttt{c4}); its search branches on the contents of the grid at almost every step, where
+tdoku's work is mostly branch-free vector operations. The counts do not change between builds, so they are a property
+of the algorithms. FastBandSolver's IPC is higher than tdoku's despite them.
+
+\paragraph{The M4.} On the M4 FastBandSolver needs fewer instructions than tdoku, 0.77 times as many, at 0.91 times its
+IPC, and so fewer cycles: 254 thousand against 299 thousand, a ratio of 1.18, which is its measured lead. It is also the
+machine on which FastBandSolver takes the fewest cycles of all, 12--27\% fewer than its native build on any x86
+processor, while tdoku takes more cycles there than its native build on every x86 processor except Zen~3.
 
 \section{Using more than one core}
 \label{sec:multicore}
@@ -1980,19 +2081,21 @@ for the middle band), so the join alone is millions of pairs.
 
 \section{Discussion}
 
-The result depends on the machine (\cref{tab:x86}). FastBandSolver is the fastest solver on the M4 and level with
-or faster than tdoku on AMD's Zen~3; tdoku is slightly faster on the hard sets on Zen~4 and clearly faster on Intel's
-Ice Lake and Sapphire Rapids. Vector width does not explain this. Zen~3 runs tdoku's 256-bit vectors natively and
-FastBandSolver still keeps level there, and the AVX-512 instructions tdoku uses on Intel account for only part of its
-lead (\cref{tab:avx512}). What differs is how each processor's cores run the two kinds of code. On the M4, all three
-solvers in \cref{tab:counters} run at an IPC between 2.1 and 2.6, their times follow their instruction counts and tree
-sizes, and cheap choices of where to branch pay off more than stronger propagation. On the Intel cores tdoku's
-propagation runs relatively faster, and its smaller tree wins.
+The result depends on the machine (\cref{tab:x86}), and the counters of \cref{sec:why} say why. FastBandSolver
+always makes more guesses than tdoku, and on x86 always runs at a higher IPC; which one wins depends on how many
+instructions each needs and how fast the core runs each kind of code. On the M4, tdoku's 256-bit operations become
+pairs of 128-bit NEON instructions, so it needs 1.29 times FastBandSolver's instructions, and FastBandSolver wins. On
+x86 tdoku needs only 0.60--0.67 times FastBandSolver's instructions; AMD's cores run FastBandSolver's code about 1.4--1.5
+times as fast per cycle as tdoku's, which makes the two level, while Intel's run tdoku's code relatively faster, and
+AVX-512 cuts its instructions further. All three solvers in \cref{tab:counters} run at an IPC between 2.1 and 2.6 on
+the hardest set on the M4, and their times follow their instruction counts and tree sizes: there, cheap choices of where to branch pay
+off more than stronger propagation.
 
 \paragraph{Limitations.} The M4 measurements are from one machine and one compiler. The x86 measurements are from
-rented virtual machines, one run of \texttt{make sota} per machine, with clock speeds we did not record, and we measured
-neither throughput nor ParallelBandSolver there, nor hardware counters. They include no x86 desktop or laptop
-processor, and the AVX-512 experiment covers two processors. The data sets are those of tdoku's benchmark, and the
+rented virtual machines, and we measured neither throughput nor ParallelBandSolver there. Hardware counters were
+available on one x86 machine type; elsewhere cycles come from time and a measured clock, validated where both were
+available (\cref{sec:why}). They include no x86 desktop or laptop processor, and we did not isolate which features
+of the Intel cores run tdoku's code faster per cycle. The data sets are those of tdoku's benchmark, and the
 forum-hardest sets are selected for difficulty under human techniques, not under search. Guess counts are not directly
 comparable across solvers that branch on different objects, which is why we compare times.
 
@@ -2003,8 +2106,9 @@ than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$
 1.07--1.61$\times$ when finding one solution. Branching carries most of the gain. The advantage depends on the
 processor: on AMD's Zen~3 FastBandSolver is level with tdoku on the hard sets and faster elsewhere, on Zen~4 it is
 slightly slower on the hard sets, and on recent Intel processors it runs at about 0.7 times tdoku's speed, as a
-projection from tdoku's published results predicted. AVX-512 accounts for only part of that gap; the rest comes from
-the cores. On many cores it keeps the highest throughput on the M4, and splitting one puzzle's search between 4
+projection from tdoku's published results predicted. Counting instructions and cycles explains the pattern: tdoku's
+vector code needs far fewer instructions on x86 than on ARM, Intel's cores run it faster per cycle than AMD's, and
+AVX-512 adds 12\% on Intel. On many cores it keeps the highest throughput on the M4, and splitting one puzzle's search between 4
 threads halves the time of the hardest puzzles, far below what the trees would allow, because moving work between
 cores costs about as much as the work. The code and the benchmark are in the repository, \texttt{make sota}
 reproduces \cref{tab:sota}, and \texttt{bench/results} holds the x86 runs.

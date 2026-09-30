@@ -1,0 +1,152 @@
+=== MACHINE
+CPU(s):                                  4
+Model name:                              AMD EPYC 7763 64-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+flags: avx2 
+paranoid: 4
+Ubuntu clang version 18.1.3 (1ubuntu1)
+=== COUNTERS build round 1
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.291e-05
+clock GHz                 3.216 3.216
+check 7875
+=== COUNTERS build round 1
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               2.655e-06
+clock GHz                 3.216 3.216
+check 294948
+=== COUNTERS build round 1
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.436e-05
+clock GHz                 3.214 3.214
+check 7875
+=== COUNTERS build round 1
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               3.789e-06
+clock GHz                 3.215 3.215
+check 294948
+=== COUNTERS build round 1
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               2.518e-04
+clock GHz                 3.214 3.215
+check 7875
+=== COUNTERS build round 1
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               5.132e-06
+clock GHz                 3.214 3.214
+check 294948
+=== COUNTERS build_v3 round 1
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               1.001e-04
+clock GHz                 3.214 3.214
+check 7875
+=== COUNTERS build_v3 round 1
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               2.828e-06
+clock GHz                 3.215 3.215
+check 294948
+=== COUNTERS build_v3 round 1
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.697e-05
+clock GHz                 3.215 3.215
+check 7875
+=== COUNTERS build_v3 round 1
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               3.815e-06
+clock GHz                 3.215 3.213
+check 294948
+=== COUNTERS build_v3 round 1
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               2.541e-04
+clock GHz                 3.214 3.216
+check 7875
+=== COUNTERS build_v3 round 1
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               5.348e-06
+clock GHz                 3.216 3.215
+check 294948
+=== COUNTERS build round 2
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.299e-05
+clock GHz                 3.215 3.215
+check 7875
+=== COUNTERS build round 2
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               2.664e-06
+clock GHz                 3.199 3.215
+check 294948
+=== COUNTERS build round 2
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.445e-05
+clock GHz                 3.215 3.216
+check 7875
+=== COUNTERS build round 2
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               3.785e-06
+clock GHz                 3.215 3.214
+check 294948
+=== COUNTERS build round 2
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               2.428e-04
+clock GHz                 3.214 3.214
+check 7875
+=== COUNTERS build round 2
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               5.136e-06
+clock GHz                 3.205 3.215
+check 294948
+=== COUNTERS build_v3 round 2
+fastband build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               1.000e-04
+clock GHz                 3.211 3.216
+check 7875
+=== COUNTERS build_v3 round 2
+fastband build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               2.814e-06
+clock GHz                 3.212 3.215
+check 294948
+=== COUNTERS build_v3 round 2
+tdoku build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               9.474e-05
+clock GHz                 3.216 3.216
+check 7875
+=== COUNTERS build_v3 round 2
+tdoku build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               3.901e-06
+clock GHz                 3.215 3.213
+check 294948
+=== COUNTERS build_v3 round 2
+jsolve build/sota_data/data/puzzles6_forum_hardest_1106 limit 2, per puzzle over 20 reps of 375 puzzles
+cannot open cycles: No such file or directory
+seconds               2.551e-04
+clock GHz                 3.214 3.216
+check 7875
+=== COUNTERS build_v3 round 2
+jsolve build/sota_data/data/puzzles2_17_clue limit 2, per puzzle over 5 reps of 49158 puzzles
+cannot open cycles: No such file or directory
+seconds               5.295e-06
+clock GHz                 3.216 3.213
+check 294948

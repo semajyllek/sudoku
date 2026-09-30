@@ -12,3 +12,18 @@ raw output of `make sota` on rented x86 machines, used for the paper's x86 table
 
 every machine: ubuntu, clang, `-O3 -march=native`, median of 5 interleaved runs, 4 virtual cpus. the `avx flags` line
 misses flags with an underscore (such as `avx512_vpopcntdq`).
+
+### counters
+
+`counters/`: output of `bench/counters.cpp` (per-puzzle cycles, instructions, branch misses; clock estimate) for the
+paper's section "why: instructions and cycles". each solver is built twice: `build` (`-march=native`) and `build_v3`
+(`-march=x86-64-v3`, the same binary on every x86 machine). two rounds each. `python3 counters.py counters/*.txt`
+summarizes them; `python3 counters.py paper` prints the paper's table rows.
+
+- `gcp-c4-emr-perf*.txt`: google cloud c4 (emerald rapids), the only machine type with hardware counters
+  (`--performance-monitoring-unit=standard`). its instruction counts stand for every x86 machine
+- `gcp-*.txt`, `github-*.txt`: no counters; cycles are time times the clock from a register-add chain
+- `gcp-c3d-zen4.txt` used the first clock estimate (an add-immediate chain). it is right on amd (zen 3 gave 3.46 and
+  3.47 ghz with the old and new chains) but not on intel since golden cove, which folds those chains (about 20 ghz on
+  c4); every intel log here uses the register-add chain
+- the m4's counts come from `bench/m4counters.cpp` through kperf (`sudo bash bench/m4counters.sh`)
