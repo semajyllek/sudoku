@@ -624,31 +624,67 @@ perfect matching.
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[x=0.55cm,y=0.55cm]
-  % a band: 3 rows x 9 columns; shaded mini-rows hold candidates for d
-  \foreach \r/\k in {0/0,0/1,1/0,2/1,2/2} {
-    \fill[gray!35] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
-  }
-  \draw[step=1,gray!60,very thin] (0,0) grid (9,3);
-  \draw[thick] (0,0) rectangle (9,3);
-  \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
-  \foreach \r in {0,1,2} \node[left] at (0,2.5-\r) {\small row \r};
-  \foreach \k in {0,1,2} \node[above] at (3*\k+1.5,3) {\small box \k};
-  % bipartite graph
-  \begin{scope}[xshift=6.3cm]
-    \foreach \r in {0,1,2} \node[circle,draw,inner sep=1.5pt,label=left:{\small row \r}] (r\r) at (0,2.5-\r*1.2) {};
-    \foreach \k in {0,1,2} \node[circle,draw,inner sep=1.5pt,label=right:{\small box \k}] (b\k) at (4,2.5-\k*1.2) {};
-    \draw[thick] (r1) -- (b0);
-    \draw[thick] (r0) -- (b1);
-    \draw[thick] (r2) -- (b2);
-    \draw[dashed] (r0) -- (b0);
-    \draw[dashed] (r2) -- (b1);
+\begin{tikzpicture}[x=0.5cm,y=0.5cm,
+  cand/.style={font=\small\bfseries},
+  gone/.style={font=\small\bfseries,red!80!black},
+  vtx/.style={circle,draw,fill=white,inner sep=1.6pt}]
+  % ---------- (a) before ----------
+  \begin{scope}
+    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(a)} candidates for 5 in one band};
+    \foreach \r/\k in {0/0,0/1,1/0,2/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\c in {0/1,0/4,1/0,1/2,2/3,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+  \end{scope}
+  % ---------- (b) graph ----------
+  \begin{scope}[xshift=7.2cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(b)} rows vs.\ boxes};
+    \foreach \r in {0,1,2} \node[vtx,label={[font=\scriptsize]left:row \r}] (r\r) at (0,3.5-1.5*\r) {};
+    \foreach \k in {0,1,2} \node[vtx,label={[font=\scriptsize]right:box \k}] (b\k) at (4,3.5-1.5*\k) {};
+    \draw[very thick] (r1) -- (b0);
+    \draw[very thick] (r0) -- (b1);
+    \draw[very thick] (r2) -- (b2);
+    \draw[dashed,thick,red] (r0) -- (b0);
+    \draw[dashed,thick,red] (r2) -- (b1);
+  \end{scope}
+  % ---------- (c) matrices ----------
+  \begin{scope}[yshift=-3.3cm]
+    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(c)} the table $A$ and its perfect matching};
+    \node at (1.6,1.9) {$A=\begin{pmatrix} 1 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 1 & 1 \end{pmatrix}$};
+    \node at (5.4,1.9) {$\longrightarrow$};
+    \node at (8.6,1.9) {$\begin{pmatrix} 0 & \mathbf{1} & 0 \\ \mathbf{1} & 0 & 0 \\ 0 & 0 & \mathbf{1} \end{pmatrix}$};
+    \node[font=\scriptsize,align=center] at (5.4,-0.1) {rows of the table = rows 0--2, columns = boxes 0--2};
+  \end{scope}
+  % ---------- (d) after ----------
+  \begin{scope}[xshift=7.2cm,yshift=-3.3cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(d)} after the band rule};
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\k in {0/1,1/0,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \r/\c in {0/4,1/0,1/2,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+    \foreach \r/\c in {0/1,2/3} {
+      \node[gone] at (\c+0.5,2.5-\r) {5};
+      \draw[red,thick] (\c+0.15,2.15-\r) -- (\c+0.85,2.85-\r);
+    }
   \end{scope}
 \end{tikzpicture}
-\caption{The band rule for one digit. Left: mini-rows of a band that still hold candidates for the digit. Right: the
-bipartite graph of rows and boxes. Row 1 can only use box 0, which forces row 0 into box 1 and row 2 into box 2;
-the dashed edges lie on no perfect matching, so the band rule removes the digit from mini-rows (0, 0) and (2, 1).
-The stack rule is the same test on bands and the columns of a stack.}
+\caption{The band rule for the digit 5, on the example used throughout the paper. (a) The band's three rows and three
+boxes; 5 is still a candidate in the cells shown, and the shaded mini-rows are those that contain a candidate. (b) The
+bipartite graph: an edge joins row $r$ and box $k$ when mini-row $(r,k)$ is shaded. Row 1 has only one edge, so it must
+take box 0; then row 0 must take box 1, and row 2 box 2. That pairing, in black, is the only perfect matching. The two
+red dashed edges are in no perfect matching. (c) The same graph as the table $A$ (1 = edge); the three bold 1s are the
+perfect matching, $\mathrm{supp}(A)$. (d) Removing the red edges removes 5 from mini-row (row 0, box 0) and mini-row
+(row 2, box 1): the candidates in column 1 of row 0 and column 3 of row 2 are eliminated, although nothing in their own
+row, column or box rules them out directly. The stack rule is the same test with bands in place of rows and a stack's
+columns in place of boxes.}
 \label{fig:band}
 \end{figure}
 
