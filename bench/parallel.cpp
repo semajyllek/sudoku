@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
 
 	FastBandSolver fast;
 
-	std::printf("microseconds per puzzle, limit %d, median of %d runs\n\n%-34s %9s %9s", limit, reps, "data set", "tdoku", "fastband");
+	std::printf("seconds per puzzle, limit %d, median of %d runs\n\n%-34s %11s %11s", limit, reps, "data set", "tdoku", "fastband");
 	for (int t : threadCounts) std::printf("  %2d threads", t);
 	std::printf("\n");
 	int problems = 0;
@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
 		std::printf("%-34s", path.substr(path.find_last_of('/') + 1).c_str());
 		for (auto &t : times) {
 			std::sort(t.begin(), t.end());
-			std::printf(" %9.3f", t[t.size() / 2] * 1e6);
+			std::printf(" %11.2e", t[t.size() / 2]);
 		}
 		std::printf("\n");
 		std::fflush(stdout);

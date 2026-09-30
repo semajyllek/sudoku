@@ -113,7 +113,7 @@ ParallelRun solveInParallel(std::vector<Puzzle> const &puzzles, int threads) {
 
 template <class Solver>
 void runDataMode(Solver &solver, int reps) {
-	std::printf("%-10s %5s %6s %7s %9s %8s %9s %11s\n", "set", "n", "solved", "invalid", "mean_us", "p50_us", "p99_us", "max_us");
+	std::printf("%-10s %5s %6s %7s %9s %9s %9s %9s\n", "set", "n", "solved", "invalid", "mean_s", "p50_s", "p99_s", "max_s");
 	for (int clues : CLUE_COUNTS) {
 		auto puzzles = readPuzzleFile(dataPath(clues));
 		if (puzzles.empty()) {
@@ -122,8 +122,9 @@ void runDataMode(Solver &solver, int reps) {
 		}
 		EachPuzzleRun run = timeEachPuzzle(solver, puzzles);
 		double mean = timeWholeSet(solver, puzzles, reps);
-		std::printf("%-10s %5zu %6d %7d %9.2f %8.2f %9.2f %11.2f\n", setLabel(clues).c_str(), puzzles.size(), run.solved, run.invalid,
-		            mean, percentile(run.micros, 0.5), percentile(run.micros, 0.99), percentile(run.micros, 1.0));
+		std::printf("%-10s %5zu %6d %7d %9.2e %9.2e %9.2e %9.2e\n", setLabel(clues).c_str(), puzzles.size(), run.solved, run.invalid,
+		            mean * 1e-6, percentile(run.micros, 0.5) * 1e-6, percentile(run.micros, 0.99) * 1e-6,
+		            percentile(run.micros, 1.0) * 1e-6);
 		std::fflush(stdout);
 	}
 }
@@ -132,7 +133,7 @@ void runDataMode(Solver &solver, int reps) {
 // threadCounts must start with 1, which every speedup is relative to
 template <class Solver>
 void runParallelMode(int reps, std::vector<int> const &threadCounts) {
-	std::printf("%-10s %5s %8s %10s %9s %6s\n", "set", "n", "threads", "batch_ms", "speedup", "valid");
+	std::printf("%-10s %5s %8s %10s %9s %6s\n", "set", "n", "threads", "batch_s", "speedup", "valid");
 	for (int clues : CLUE_COUNTS) {
 		auto puzzles = readPuzzleFile(dataPath(clues));
 		if (puzzles.empty()) continue;
@@ -147,7 +148,7 @@ void runParallelMode(int reps, std::vector<int> const &threadCounts) {
 			}
 			double ms = percentile(millis, 0.5);
 			if (threads == 1) oneThread = ms;
-			std::printf("%-10s %5zu %8d %10.2f %8.2fx %6d\n", setLabel(clues).c_str(), puzzles.size(), threads, ms, oneThread / ms, valid);
+			std::printf("%-10s %5zu %8d %10.2e %8.2fx %6d\n", setLabel(clues).c_str(), puzzles.size(), threads, ms / 1000, oneThread / ms, valid);
 			std::fflush(stdout);
 		}
 	}
@@ -163,7 +164,7 @@ void runHardMode(Solver &solver, std::string const &which) {
 		bool ok = solver.solve(p.grid, out);
 		double micros = microsSince(start);
 		const char *result = !ok ? "unsolved" : validSolution(p.grid, out) ? "valid" : "INVALID";
-		std::printf("%-20s %-8s %12.1f us\n", p.name.c_str(), result, micros);
+		std::printf("%-20s %-8s %10.2e s\n", p.name.c_str(), result, micros * 1e-6);
 		std::fflush(stdout);
 	}
 }

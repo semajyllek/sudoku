@@ -170,13 +170,12 @@ std::vector<double> medianTimes(std::vector<std::string> const &puzzles, int rep
 }
 
 
-// significant figures of printed times (DIGITS in the environment); 2 gives e.g. 0.0000084
-int digits = 2;
+// significant figures of printed times (DIGITS in the environment); 3 gives e.g. 8.43e-06
+int digits = 3;
 
-std::string decimalSeconds(double seconds) {
-	int decimals = std::max(0, digits - 1 - (int) std::floor(std::log10(seconds)));
+std::string scientificSeconds(double seconds) {
 	char text[32];
-	std::snprintf(text, sizeof text, "%.*f", decimals, seconds);
+	std::snprintf(text, sizeof text, "%.*e", digits - 1, seconds);
 	return text;
 }
 
@@ -214,7 +213,7 @@ int main(int argc, char **argv) {
 		}
 		std::vector<double> times = medianTimes(puzzles, reps);
 		std::printf("%-34s %7zu", setName(argv[a]).c_str(), puzzles.size());
-		for (double t : times) std::printf(" %15s", decimalSeconds(t).c_str());
+		for (double t : times) std::printf(" %15s", scientificSeconds(t).c_str());
 		// from the unrounded medians
 		std::printf(" %15.3f\n", times[tdoku] / times[fast]);
 		std::fflush(stdout);

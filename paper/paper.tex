@@ -21,10 +21,9 @@
 \newtheorem{definition}[theorem]{Definition}
 \theoremstyle{plain}
 
-\sisetup{detect-all}
+\sisetup{detect-all, exponent-product=\times}
 \let\origtextsc\textsc
 \renewcommand{\textsc}[1]{\textup{\origtextsc{#1}}}
-\newcommand{\us}{\,\si{\micro\second}}
 
 \title{Fewer, Better Guesses: A Scalar Band Solver\\that Outperforms SIMD Sudoku Solvers on Apple Silicon}
 \author{James Kelly}
@@ -444,7 +443,7 @@ puzzles.
 
 RKCR7~\cite{rkcr7_2026autoresearch} (March 2026) is a Rust solver in the same family, written by an AI coding agent in
 a loop of automated experiments. It reports beating tdoku on four of six of tdoku's data sets on an AMD processor with
-AVX-512, for example 30.4 against 58.7\us{} per puzzle on the hardest set. Its comparison is not like for like: its
+AVX-512, for example \SI{3.04e-5}{\second} against \SI{5.87e-5}{\second} per puzzle on the hardest set. Its comparison is not like for like: its
 \texttt{solve} function stops at the first solution, while tdoku was timed with tdoku's own benchmark program, which by
 default also checks uniqueness (a limit of 2). The published log confirms this: it shows tdoku making 61.67 guesses per
 puzzle on the 1905 11+ set, exactly tdoku's count at limit 2 on our machine, against 34.17 at limit 1. Its solver
@@ -1390,7 +1389,7 @@ SIMDe and about 3 times faster than the SSE2 path, and 1.23 times faster than th
 
 \begin{table}[t]
 \centering
-\caption{tdoku on the M4 Max, \si{\micro\second} per puzzle, limit 2, under three ways of running its x86 SIMD code on
+\caption{tdoku on the M4 Max, seconds per puzzle, limit 2, under three ways of running its x86 SIMD code on
 ARM~\cite{kelly2026tdokuarm}.}
 \label{tab:port}
 \small
@@ -1398,9 +1397,9 @@ ARM~\cite{kelly2026tdokuarm}.}
 \toprule
 data set & native NEON (our port) & SIMDe, SSE4.1 path & SIMDe, SSE2 path \\
 \midrule
-17 clue & 2.89 & 3.68 & 8.54 \\
-magictour top 1465 & 8.04 & 10.71 & 24.00 \\
-forum hardest 1106 & 72.4 & 94.9 & 219.9 \\
+17 clue & \num{2.89e-6} & \num{3.68e-6} & \num{8.54e-6} \\
+magictour top 1465 & \num{8.04e-6} & \num{1.071e-5} & \num{2.400e-5} \\
+forum hardest 1106 & \num{7.24e-5} & \num{9.49e-5} & \num{2.199e-4} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1414,7 +1413,7 @@ operations as two 128-bit ones, as on x86 without AVX2; the fastest published td
 
 \begin{table}[t]
 \centering
-\caption{Time per puzzle in \si{\micro\second} (guesses per puzzle), limit 2, median of 7 interleaved runs, Apple M4 Max.
+\caption{Time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2, median of 7 interleaved runs, Apple M4 Max.
 Every solver solves every puzzle with a valid solution and agrees on the solution counts. Guesses are each solver's
 own count of binary decisions. Between two complete runs of this benchmark on different occasions, every solver's
 times moved by up to 3\%, together; ratios between solvers moved by up to 0.03.}
@@ -1425,11 +1424,16 @@ times moved by up to 3\%, together; ratios between solvers moved by up to 0.03.}
 \toprule
 data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
 \midrule
-17 clue & 49158 & \textbf{1.79} (0.68) & 2.90 (0.57) & 2.38 (2.37) & 2.96 (0.60) & 14.5 (4.51) \\
-magictour top 1465 & 1465 & \textbf{6.90} (10.3) & 8.31 (8.94) & 10.0 (22.0) & 12.8 (12.1) & 64.2 (33.9) \\
-forum hardest 1106 & 375 & \textbf{62.1} (138) & 72.7 (110) & 107 (363) & 149 (183) & 562 (326) \\
-forum hardest 1905 11+ & 48766 & \textbf{39.9} (81.0) & 46.5 (61.7) & 55.9 (167) & 90.4 (100) & 272 (142) \\
-kaggle & 100000 & \textbf{0.864} (0) & 0.922 (0) & 1.17 (0) & 1.55 (0) & 7.48 (0) \\
+17 clue & 49158 & \textbf{\num{1.79e-6}} & \num{2.90e-6} & \num{2.38e-6} & \num{2.96e-6} & \num{1.45e-5} \\
+&& (0.68) & (0.57) & (2.37) & (0.60) & (4.51) \\[2pt]
+magictour top 1465 & 1465 & \textbf{\num{6.90e-6}} & \num{8.31e-6} & \num{1.00e-5} & \num{1.28e-5} & \num{6.42e-5} \\
+&& (10.3) & (8.94) & (22.0) & (12.1) & (33.9) \\[2pt]
+forum hardest 1106 & 375 & \textbf{\num{6.21e-5}} & \num{7.27e-5} & \num{1.07e-4} & \num{1.49e-4} & \num{5.62e-4} \\
+&& (138) & (110) & (363) & (183) & (326) \\[2pt]
+forum hardest 1905 11+ & 48766 & \textbf{\num{3.99e-5}} & \num{4.65e-5} & \num{5.59e-5} & \num{9.04e-5} & \num{2.72e-4} \\
+&& (81.0) & (61.7) & (167) & (100) & (142) \\[2pt]
+kaggle & 100000 & \textbf{\num{8.64e-7}} & \num{9.22e-7} & \num{1.17e-6} & \num{1.55e-6} & \num{7.48e-6} \\
+&& (0) & (0) & (0) & (0) & (0) \\[2pt]
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1475,7 +1479,7 @@ lookups are pure overhead.
 
 \begin{table}[t]
 \centering
-\caption{Ablation: time per puzzle in \si{\micro\second} (guesses per puzzle), limit 2. Each variant is a separate
+\caption{Ablation: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2. Each variant is a separate
 build of the same code; variants ran one after another, each taking the median of 5 runs per data set, and we report
 the better of two such sweeps.}
 \label{tab:ablation}
@@ -1485,14 +1489,22 @@ the better of two such sweeps.}
 peer & stack & fewest & hardest 1106 & hardest 1905 & magictour & 17 clue & kaggle \\
 branching & rule & fallback & & & & & \\
 \midrule
- & & & 116.8 (361) & 60.3 (166) & 10.3 (22.0) & 2.11 (2.4) & 0.79 \\
- & & \checkmark & 103.6 (305) & 57.7 (155) & 10.2 (21.7) & 2.00 (1.9) & 0.79 \\
- & \checkmark & & 108.0 (315) & 54.2 (144) & 9.6 (18.8) & 2.00 (1.4) & 0.84 \\
- & \checkmark & \checkmark & 92.7 (262) & 51.0 (133) & 9.5 (18.5) & 1.95 (1.2) & 0.85 \\
-\checkmark & & & 85.1 (197) & 48.7 (105) & 7.3 (12.3) & 1.80 (1.1) & 0.79 \\
-\checkmark & & \checkmark & 75.1 (173) & 46.2 (99) & 7.4 (12.1) & 1.74 (0.9) & 0.79 \\
-\checkmark & \checkmark & & 70.2 (157) & 41.3 (86) & 6.9 (10.4) & 1.85 (0.8) & 0.85 \\
-\checkmark & \checkmark & \checkmark & \textbf{62.1} (138) & \textbf{39.4} (81) & \textbf{6.8} (10.2) & 1.80 (0.7) & 0.84 \\
+ & & & \num{1.168e-4} & \num{6.03e-5} & \num{1.03e-5} & \num{2.11e-6} & \num{7.9e-7} \\
+&&& (361) & (166) & (22.0) & (2.4) & \\[2pt]
+ & & \checkmark & \num{1.036e-4} & \num{5.77e-5} & \num{1.02e-5} & \num{2.00e-6} & \num{7.9e-7} \\
+&&& (305) & (155) & (21.7) & (1.9) & \\[2pt]
+ & \checkmark & & \num{1.080e-4} & \num{5.42e-5} & \num{9.6e-6} & \num{2.00e-6} & \num{8.4e-7} \\
+&&& (315) & (144) & (18.8) & (1.4) & \\[2pt]
+ & \checkmark & \checkmark & \num{9.27e-5} & \num{5.10e-5} & \num{9.5e-6} & \num{1.95e-6} & \num{8.5e-7} \\
+&&& (262) & (133) & (18.5) & (1.2) & \\[2pt]
+\checkmark & & & \num{8.51e-5} & \num{4.87e-5} & \num{7.3e-6} & \num{1.80e-6} & \num{7.9e-7} \\
+&&& (197) & (105) & (12.3) & (1.1) & \\[2pt]
+\checkmark & & \checkmark & \num{7.51e-5} & \num{4.62e-5} & \num{7.4e-6} & \num{1.74e-6} & \num{7.9e-7} \\
+&&& (173) & (99) & (12.1) & (0.9) & \\[2pt]
+\checkmark & \checkmark & & \num{7.02e-5} & \num{4.13e-5} & \num{6.9e-6} & \num{1.85e-6} & \num{8.5e-7} \\
+&&& (157) & (86) & (10.4) & (0.8) & \\[2pt]
+\checkmark & \checkmark & \checkmark & \textbf{\num{6.21e-5}} & \textbf{\num{3.94e-5}} & \textbf{\num{6.8e-6}} & \num{1.80e-6} & \num{8.4e-7} \\
+&&& (138) & (81) & (10.2) & (0.7) & \\[2pt]
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1504,14 +1516,14 @@ limit 1. FastBandSolver is fastest on all five sets here too: $1.36\times$ faste
 $1.18\times$ on the second forum set, $1.23\times$ on magictour, $1.61\times$ on 17-clue and $1.07\times$ on kaggle.
 JCZSolve comes closer at limit 1 than at limit 2, within 4\% on the hardest set, since stopping at the first solution
 removes much of the benefit of a smaller tree; tdoku still makes the fewest guesses. Measuring this exposed one cost that
-only limit 1 pays: copying out the solution first looked up each cell's digit by scanning the digits' masks, about half a
-microsecond per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
+only limit 1 pays: copying out the solution first looked up each cell's digit by scanning the digits' masks, about
+\SI{5e-7}{\second} per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
 removed it; the numbers here are with that change, which does not affect limit 2, where no solution is copied.
 \texttt{make sota LIMIT=1} reproduces the table for every solver but JCZSolve.
 
 \begin{table}[t]
 \centering
-\caption{Finding one solution: time per puzzle in \si{\micro\second} (guesses per puzzle), limit 1, median of 7
+\caption{Finding one solution: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 1, median of 7
 interleaved runs. Every solver finds a valid solution to every puzzle, and every solver writes it out.}
 \label{tab:limit1}
 \small
@@ -1520,11 +1532,16 @@ interleaved runs. Every solver finds a valid solution to every puzzle, and every
 \toprule
 data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
 \midrule
-17 clue & 49158 & \textbf{1.70} (0.56) & 2.74 (0.46) & 2.08 (1.53) & 2.76 (0.48) & 8.20 (2.95) \\
-magictour top 1465 & 1465 & \textbf{4.40} (6.85) & 5.42 (6.07) & 6.04 (13.3) & 7.71 (8.06) & 31.5 (18.0) \\
-forum hardest 1106 & 375 & \textbf{28.7} (65.9) & 39.1 (59.8) & 30.0 (98.9) & 74.2 (101) & 278 (168) \\
-forum hardest 1905 11+ & 48766 & \textbf{20.5} (44.0) & 24.2 (34.2) & 27.7 (84.8) & 45.2 (52.8) & 135 (75.4) \\
-kaggle & 100000 & \textbf{0.863} (0) & 0.923 (0) & 1.13 (0) & 1.51 (0) & 5.57 (0) \\
+17 clue & 49158 & \textbf{\num{1.70e-6}} & \num{2.74e-6} & \num{2.08e-6} & \num{2.76e-6} & \num{8.20e-6} \\
+&& (0.56) & (0.46) & (1.53) & (0.48) & (2.95) \\[2pt]
+magictour top 1465 & 1465 & \textbf{\num{4.40e-6}} & \num{5.42e-6} & \num{6.04e-6} & \num{7.71e-6} & \num{3.15e-5} \\
+&& (6.85) & (6.07) & (13.3) & (8.06) & (18.0) \\[2pt]
+forum hardest 1106 & 375 & \textbf{\num{2.87e-5}} & \num{3.91e-5} & \num{3.00e-5} & \num{7.42e-5} & \num{2.78e-4} \\
+&& (65.9) & (59.8) & (98.9) & (101) & (168) \\[2pt]
+forum hardest 1905 11+ & 48766 & \textbf{\num{2.05e-5}} & \num{2.42e-5} & \num{2.77e-5} & \num{4.52e-5} & \num{1.35e-4} \\
+&& (44.0) & (34.2) & (84.8) & (52.8) & (75.4) \\[2pt]
+kaggle & 100000 & \textbf{\num{8.63e-7}} & \num{9.23e-7} & \num{1.13e-6} & \num{1.51e-6} & \num{5.57e-6} \\
+&& (0) & (0) & (0) & (0) & (0) \\[2pt]
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1692,7 +1709,7 @@ of each node (band updates, the dominant cost), and computed two bounds.
   needs branches to be handed out as the search goes.
 \end{itemize}
 
-The obstacle is size. A node takes about 0.2\us{} on average, so moving work between cores has to cost less than that,
+The obstacle is size. A node takes about \SI{2e-7}{\second} on average, so moving work between cores has to cost less than that,
 or be limited to branches large enough to be worth it.
 
 \subsection{ParallelBandSolver}
@@ -1705,8 +1722,8 @@ each found by measurement on a prototype, make it faster than one thread rather 
 \begin{itemize}
 \item \textbf{No sleeping on the queue.} With an ordinary mutex, every idle thread tried to take a new branch at once, and
   under that contention the operating system put threads to sleep, which costs more than a whole puzzle: with 8 threads
-  the hardest set took 177\us{} per puzzle instead of 56\us. A try-lock, where a thread that finds the queue busy keeps
-  spinning, together with the depth limit below, brought 4 threads to 25\us.
+  the hardest set took \SI{1.77e-4}{\second} per puzzle instead of \SI{5.6e-5}{\second}. A try-lock, where a thread that finds the queue busy keeps
+  spinning, together with the depth limit below, brought 4 threads to \SI{2.5e-5}{\second}.
 \item \textbf{Only near the top.} Branches are handed out only while fewer than 8 guesses deep, where subtrees are large.
 \item \textbf{Only for hard puzzles.} A puzzle is searched by the calling thread alone until it has taken 16 nodes, so
   easy puzzles never involve the other threads.
@@ -1717,55 +1734,57 @@ each found by measurement on a prototype, make it faster than one thread rather 
 
 \begin{table}[t]
 \centering
-\caption{Latency: time per puzzle in \si{\micro\second}, limit 2, one puzzle at a time, median of 5 runs. tdoku and
+\caption{Latency: time per puzzle in seconds, limit 2, one puzzle at a time, median of 5 runs. tdoku and
 FastBandSolver use one thread; ParallelBandSolver uses the number of threads shown, with one pool of threads alive at a time (in a first run with four pools alive at once, whose idle workers interfered,
-4 threads took 40.9\us{} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
+4 threads took \SI{4.09e-5}{\second} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
 comparison with tdoku, which uses one core.}
 \label{tab:latency}
-\small
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lrrrrrr}
 \toprule
  & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
 \cmidrule(lr){4-7}
 data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
 \midrule
-17 clue & 2.98 & 1.85 & 1.88 & 1.91 & 1.90 & 2.00 \\
-magictour top 1465 & 8.20 & 6.97 & 6.44 & \textbf{6.29} & 6.34 & 9.06 \\
-forum hardest 1106 & 73.7 & 62.7 & 40.9 & 33.0 & \textbf{29.5} & 63.7 \\
-forum hardest 1905 11+ & 48.0 & 41.3 & 28.0 & 25.3 & \textbf{24.4} & 45.7 \\
-kaggle & 0.951 & 0.871 & 0.870 & 0.874 & 0.872 & 0.872 \\
+17 clue & \num{2.98e-6} & \num{1.85e-6} & \num{1.88e-6} & \num{1.91e-6} & \num{1.90e-6} & \num{2.00e-6} \\
+magictour top 1465 & \num{8.20e-6} & \num{6.97e-6} & \num{6.44e-6} & \textbf{\num{6.29e-6}} & \num{6.34e-6} & \num{9.06e-6} \\
+forum hardest 1106 & \num{7.37e-5} & \num{6.27e-5} & \num{4.09e-5} & \num{3.30e-5} & \textbf{\num{2.95e-5}} & \num{6.37e-5} \\
+forum hardest 1905 11+ & \num{4.80e-5} & \num{4.13e-5} & \num{2.80e-5} & \num{2.53e-5} & \textbf{\num{2.44e-5}} & \num{4.57e-5} \\
+kaggle & \num{9.51e-7} & \num{8.71e-7} & \num{8.70e-7} & \num{8.74e-7} & \num{8.72e-7} & \num{8.72e-7} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \Cref{tab:latency} gives the results; \texttt{make parallel} reproduces them. With 4 threads, the hardest set takes
-29.5\us{} per puzzle instead of 62.7\us{} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's 73.7\us), and the
-second forum set 24.4\us{} instead of 41.3\us{} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
+\SI{2.95e-5}{\second} per puzzle instead of \SI{6.27e-5}{\second} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's \SI{7.37e-5}{\second}), and the
+second forum set \SI{2.44e-5}{\second} instead of \SI{4.13e-5}{\second} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
 
 \begin{table}[t]
 \centering
-\caption{Latency at limit 1 (one solution, written out): time per puzzle in \si{\micro\second}, median of 5 runs, as in
+\caption{Latency at limit 1 (one solution, written out): time per puzzle in seconds, median of 5 runs, as in
 \cref{tab:latency}.}
 \label{tab:latency1}
-\small
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
 \begin{tabular}{lrrrrrr}
 \toprule
  & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
 \cmidrule(lr){4-7}
 data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
 \midrule
-17 clue & 2.75 & 1.69 & 1.72 & 1.74 & 1.73 & 1.81 \\
-magictour top 1465 & 5.30 & 4.42 & \textbf{4.21} & 4.30 & 4.42 & 6.13 \\
-forum hardest 1106 & 38.6 & 28.9 & 20.0 & 17.4 & \textbf{16.5} & 40.0 \\
-forum hardest 1905 11+ & 24.4 & 20.6 & 14.9 & \textbf{13.4} & 13.4 & 31.0 \\
-kaggle & 0.936 & 0.871 & 0.861 & 0.865 & 0.861 & 0.858 \\
+17 clue & \num{2.75e-6} & \num{1.69e-6} & \num{1.72e-6} & \num{1.74e-6} & \num{1.73e-6} & \num{1.81e-6} \\
+magictour top 1465 & \num{5.30e-6} & \num{4.42e-6} & \textbf{\num{4.21e-6}} & \num{4.30e-6} & \num{4.42e-6} & \num{6.13e-6} \\
+forum hardest 1106 & \num{3.86e-5} & \num{2.89e-5} & \num{2.00e-5} & \num{1.74e-5} & \textbf{\num{1.65e-5}} & \num{4.00e-5} \\
+forum hardest 1905 11+ & \num{2.44e-5} & \num{2.06e-5} & \num{1.49e-5} & \textbf{\num{1.34e-5}} & \num{1.34e-5} & \num{3.10e-5} \\
+kaggle & \num{9.36e-7} & \num{8.71e-7} & \num{8.61e-7} & \num{8.65e-7} & \num{8.61e-7} & \num{8.58e-7} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 At limit 1 (\cref{tab:latency1}, \texttt{make parallel LIMIT=1}) the pattern is the same: 4 threads take the hardest set
-from 28.9 to 16.5\us{} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
-13.4\us{} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
+from \SI{2.89e-5}{\second} to \SI{1.65e-5}{\second} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
+\SI{1.34e-5}{\second} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
 at the first solution, so there is less of the tree to share.
 The easy sets are not helped: kaggle is unchanged, since its puzzles never reach the sharing threshold, and 17-clue is
 about 3\% slower. Beyond 4 threads the times get worse again. Our explanation, which we could not test directly, is that
@@ -1791,7 +1810,7 @@ no data races.
 \label{sec:negative}
 
 We tried six other directions before the design above. Each was measured on the hardest set against tdoku's
-75\us{} and 110 guesses; we report them because each is a natural idea and none paid off here.
+\SI{7.5e-5}{\second} and 110 guesses; we report them because each is a natural idea and none paid off here.
 
 \paragraph{Template search.} The template or pattern-overlay method~\cite{stuart2008pom} treats each digit's placements as one
 of 46{,}656 templates.\footnote{Count them band by band. In the first band, choose which box each row uses (6 ways)
@@ -1809,12 +1828,12 @@ than the pattern overlay method and shows that single-digit deduction is NP-hard
 \paragraph{Search-tree nodes in SIMD lanes.} With a limit of 2 on a puzzle with one solution, the whole tree must be
 searched, so the order of nodes does not matter and several nodes can be propagated at once. We wrote a branch-free
 propagation round that runs one board per 32-bit lane of NEON registers, and verified it inside a one-board search
-against tdoku on all five sets; we did not build the scheduler that keeps the lanes full. One round costs 74\,ns per
-board with 4 lanes (3{,}344 instructions per round for 4 boards, IPC 2.8), 62\,ns with 8 and 50\,ns with 16, and a
+against tdoku on all five sets; we did not build the scheduler that keeps the lanes full. One round costs \SI{7.4e-8}{\second} per
+board with 4 lanes (3{,}344 instructions per round for 4 boards, IPC 2.8), \SI{6.2e-8}{\second} with 8 and \SI{5e-8}{\second} with 16, and a
 node needs 3.9 rounds to reach a fixed point; capping the rounds grows the tree faster than it saves work (1{,}340
-board-rounds per puzzle at two rounds per node vs.\ 1{,}119 at the fixed point). That projects to 240--290\,ns per
-node with 4--8 lanes, above the roughly 220\,ns per node of JCZSolve's incremental engine under the same peer-count
-branching, and 195\,ns with 16 lanes, near parity before any scheduling cost. We stopped there: a frontier of 16 nodes
+board-rounds per puzzle at two rounds per node vs.\ 1{,}119 at the fixed point). That projects to \SIrange{2.4e-7}{2.9e-7}{\second} per
+node with 4--8 lanes, above the roughly \SI{2.2e-7}{\second} per node of JCZSolve's incremental engine under the same peer-count
+branching, and \SI{1.95e-7}{\second} with 16 lanes, near parity before any scheduling cost. We stopped there: a frontier of 16 nodes
 cannot be kept full over most of a tree of a few hundred nodes. Two things are missing: NEON has no gather, so the $3\times 3$ matching takes about 40 bit
 operations instead of one lookup in a 512-entry table, and full rounds recompute all 27 (digit, band) masks where an
 incremental engine touches only the changed ones.
@@ -1827,7 +1846,7 @@ results; the extra bookkeeping cost more than the overlap gained.
 
 \paragraph{Lookahead.} Probing both children of the best-scored two-candidate cells before branching, and taking a
 failed probe as a free deduction, shrinks the tree fourfold: with JCZSolve's engine and 2 probed cells per node the
-guesses fall from 199 to 49 on the hardest set. The time rises from 87 to 102\us, and probing only near the root, at
+guesses fall from 199 to 49 on the hardest set. The time rises from \SI{8.7e-5}{\second} to \SI{1.02e-4}{\second}, and probing only near the root, at
 any threshold we tried, was never faster than not probing. In a slower reference solver the tree fell further (18
 guesses with 64 probed cells), but at 1{,}282 probes per puzzle. This probing is what Simonis calls
 \emph{shaving}~\cite{simonis2005sudoku}, which he found a strong filter in constraint models; our result is that in a
@@ -1837,7 +1856,7 @@ fast band solver it costs more than it saves.
 three digits must hold all three, and three digits forced into a mini-row exclude the others) reduced the tree by
 6--10\%, not enough to pay for themselves. Scoring bivalue cells and bilocations (a digit with two places left in a
 unit) by the candidates they touch reduced the tree by another 18\% in the reference solver (121 vs.\ 148 guesses),
-but computing the score cost about 0.9\us{} per branch node in a band solver, more than it saved. Scoring by the peer
+but computing the score cost about \SI{9e-7}{\second} per branch node in a band solver, more than it saved. Scoring by the peer
 candidates of the cell's two digits saves 1.5\% of guesses and costs 17\% of time. Branching on band configurations
 as tdoku does was worse than peer-count branching with our rules (169 vs.\ 142 guesses).
 
