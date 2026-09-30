@@ -170,9 +170,11 @@ std::vector<double> medianTimes(std::vector<std::string> const &puzzles, int rep
 }
 
 
-// 2 significant figures as a plain decimal, e.g. 0.0000084
+// significant figures of printed times (DIGITS in the environment); 2 gives e.g. 0.0000084
+int digits = 2;
+
 std::string decimalSeconds(double seconds) {
-	int decimals = std::max(0, 1 - (int) std::floor(std::log10(seconds)));
+	int decimals = std::max(0, digits - 1 - (int) std::floor(std::log10(seconds)));
 	char text[32];
 	std::snprintf(text, sizeof text, "%.*f", decimals, seconds);
 	return text;
@@ -192,9 +194,15 @@ int main(int argc, char **argv) {
 	}
 	int reps = std::atoi(argv[1]);
 	if (std::getenv("LIMIT")) timingLimit = std::atoi(std::getenv("LIMIT"));
+	if (std::getenv("DIGITS")) digits = std::max(1, std::atoi(std::getenv("DIGITS")));
+	size_t fast = 0, tdoku = 0;
+	for (size_t s = 0; s < SOLVERS.size(); s++) {
+		if (std::string(SOLVERS[s].name) == "fastbandsolver") fast = s;
+		if (std::string(SOLVERS[s].name) == "tdoku") tdoku = s;
+	}
 	std::printf("seconds per puzzle, limit %zu, median of %d runs\n\n%-34s %7s", timingLimit, reps, "data set", "puzzles");
 	for (auto const &s : SOLVERS) std::printf(" %15s", s.name);
-	std::printf("\n");
+	std::printf(" %15s\n", "tdoku/fastband");
 
 	int problems = 0;
 	for (int a = 2; a < argc; a++) {
@@ -207,7 +215,8 @@ int main(int argc, char **argv) {
 		std::vector<double> times = medianTimes(puzzles, reps);
 		std::printf("%-34s %7zu", setName(argv[a]).c_str(), puzzles.size());
 		for (double t : times) std::printf(" %15s", decimalSeconds(t).c_str());
-		std::printf("\n");
+		// from the unrounded medians
+		std::printf(" %15.3f\n", times[tdoku] / times[fast]);
 		std::fflush(stdout);
 	}
 	std::printf("\n%s\n", problems ? "some answers were wrong, see above" : "every solver solved every puzzle correctly");
