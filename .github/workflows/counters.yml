@@ -46,7 +46,7 @@ jobs:
           } | tee ../counters.txt
           sudo sysctl -w kernel.perf_event_paranoid=-1 >/dev/null || true
           make -s build/sota/counters build/sota_data/unpacked >/dev/null 2>&1
-          make -s build/sota/counters build/sota_data/unpacked BUILD=build_v3 SOTA_FLAGS="-O3 -march=x86-64-v3" >/dev/null 2>&1
+          make -s build_v3/sota/counters build_v3/sota_data/unpacked BUILD=build_v3 SOTA_FLAGS="-O3 -march=x86-64-v3" >/dev/null 2>&1
           D=build/sota_data/data
           for round in 1 2; do
             for build in build build_v3; do
