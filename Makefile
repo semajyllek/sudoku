@@ -124,6 +124,10 @@ $(BUILD)/sota/sota: bench/sota.cpp $(SOLVER) fastbandsolver.hpp $(SOTA_OBJECTS)
 $(BUILD)/sota/parallel: bench/parallel.cpp parallelbandsolver.hpp fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) $< $(BUILD)/sota/tdoku.o $(BUILD)/sota/tdoku_util.o -o $@
 
+# hardware counters for one solver (Linux perf_event_open; elsewhere it only times the loop)
+$(BUILD)/sota/counters: bench/counters.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
+
 $(BUILD)/sota/throughput: bench/throughput.cpp fastbandsolver.hpp $(SOTA_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(SOTA_FLAGS) -I$(TDOKU)/other $< $(SOTA_OBJECTS) -o $@
 
