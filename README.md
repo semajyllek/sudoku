@@ -56,8 +56,8 @@ solves every puzzle correctly. from `make sota`:
   forum hardest 1905 11+ | 48766 | 0.000040 | 0.00028 | 0.000047 | 0.000091 | 0.00027
   kaggle | 100000 | 0.00000086 | 0.0000016 | 0.00000094 | 0.0000016 | 0.0000076
 
-- [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver in its own benchmark of the fastest known
-  solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)
+- [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver on hard puzzles in its own benchmark of the
+  fastest known solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)
 - jsolve and kudoku are the fastest cell-based and exact-cover (dancing links style) solvers in tdoku's benchmarks
 - fastbandsolver is 1.1 to 1.6 times faster than tdoku. `paper/` describes how, with an ablation and the approaches
   that didn't work
