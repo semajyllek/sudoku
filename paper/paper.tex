@@ -714,6 +714,43 @@ and an AND give the band's \emph{column set} $P(M)=(M \mid M\gg 9 \mid M\gg 18)\
 candidate in the band, and $\mathrm{cols}(x)=x \mid x\ll 9 \mid x\ll 18$ spreads a 9-bit column set back to cells (two shifts
 and two ORs).
 
+\paragraph{Example.} Take the band of \cref{fig:band} after the band rule: the digit has candidates in column 4 of row
+0, columns 0 and 2 of row 1, and column 8 of row 2. Writing each row's 9 bits with column 8 on the left:
+\begin{center}
+\small
+\begin{tabular}{lccc}
+ & row 2 & row 1 & row 0 \\
+columns & \texttt{876543210} & \texttt{876543210} & \texttt{876543210} \\
+\midrule
+$M$ & \texttt{100000000} & \texttt{000000101} & \texttt{000010000} \\
+octal & \texttt{4 0 0} & \texttt{0 0 5} & \texttt{0 2 0} \\
+\end{tabular}
+\end{center}
+so $M=400005020_8$. Shifting right by 9 moves every row down one slot (row 1 lands where row 0 was, row 2 where row 1
+was), and shifting by 18 moves row 2 down to row 0's slot. OR-ing the three stacks all three rows on top of each other in
+the lowest slot:
+\begin{center}
+\small
+\begin{tabular}{lccc}
+ & slot 2 & slot 1 & slot 0 \\
+\midrule
+$M$ & \texttt{100000000} & \texttt{000000101} & \texttt{000010000} \\
+$M\gg 9$ & \texttt{000000000} & \texttt{100000000} & \texttt{000000101} \\
+$M\gg 18$ & \texttt{000000000} & \texttt{000000000} & \texttt{100000000} \\
+\midrule
+OR & \texttt{100000000} & \texttt{100000101} & \texttt{100010101} \\
+\end{tabular}
+\end{center}
+Slot 0 now holds row 0 OR row 1 OR row 2: a 1 in every column with a candidate in any row. The upper slots hold
+leftover partial ORs with no meaning, and ANDing with $777_8$ keeps only slot 0, so $P(M)=100010101_2=425_8$: columns 0,
+2, 4 and 8. Spreading back is the reverse: shifting left by 9 and 18 copies the 9 bits into the other two rows, so
+$\mathrm{cols}(425_8)=425425425_8$, every cell of columns 0, 2, 4 and 8 in the band; nothing needs masking, since
+nothing moves past bit 26. The stack rule uses both. It reads each band's column set with $P$, decides which columns
+to keep, and applies the decision with $\mathrm{cols}$: keeping only columns 0 and 2 gives
+$M \,\&\, \mathrm{cols}(000000101_2) = 400005020_8 \,\&\, 005005005_8 = 000005000_8$, which keeps row 1's two candidates
+and removes those in columns 4 and 8. The band update compares $P$ of the new mask with $P$ of the old one to decide
+whether the stack rule needs to run at all.
+
 The search state is a plain struct:
 
 \begin{center}
