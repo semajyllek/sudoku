@@ -1,0 +1,20 @@
+Lines 8--9 find the rows that are down to one cell without examining the rows bit by bit. In the lemma we write
+$M$ for $\mathit{bandCells}$, $A$ for $\mathit{boxCandidates}$ and $P$ for $\mathit{columns}$:
+
+\begin{lemma}
+\label{lem:singlerows}
+Suppose the mask $M$ is nonzero after line 3, and let $A$ be the box-candidate matrix computed in line 2. Then row $r$ of the
+band has exactly one candidate cell if and only if row $r$ has exactly one 1 in $\mathrm{supp}(A)$, say in box $k$, and
+box $k$ has exactly one column in $P$.
+\end{lemma}
+\begin{proof}
+Line 3 keeps every candidate cell of each triad in $\mathrm{supp}(A)$ and removes the others; each kept triad has
+at least one candidate, since its entry of $A$ is 1. So after line 3 the box-candidate matrix of $M$ is $\mathrm{supp}(A)$,
+and row $r$ has candidates exactly in the boxes where row $r$ of $\mathrm{supp}(A)$ has a 1. Because $M\neq 0$,
+$\mathrm{supp}(A)\neq 0$, so by \cref{lem:idempotent} every row of it has at least one 1. If row $r$ has two or more, it
+has at least two candidate cells. If it has exactly one, in box $k$, then every perfect matching of $A$ sends $r$ to $k$
+(its entry in row $r$ must be a 1 of the support), so no other row $r'$ has $(r',k)$ in the support, and after line 3
+the candidates of box $k$ are exactly those of row $r$'s triad. Box $k$'s columns in $P$ are then the columns of
+those candidates, so the triad has exactly one candidate cell exactly when box $k$ has one column in $P$.
+\end{proof}
+

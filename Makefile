@@ -24,7 +24,7 @@ SOTA_DATA = $(BUILD)/sota_data/data
 SOTA_SETS = puzzles2_17_clue puzzles3_magictour_top1465 puzzles6_forum_hardest_1106 puzzles5_forum_hardest_1905_11+ puzzles0_kaggle
 SOTA_OBJECTS = $(BUILD)/sota/tdoku.o $(BUILD)/sota/tdoku_util.o $(BUILD)/sota/jsolve.o $(BUILD)/sota/kudoku.o
 
-.PHONY: all test bench data watch sota verify parallel throughput paper figs clean
+.PHONY: all test bench data watch sota verify parallel throughput paper short sea figs clean
 
 all: $(BUILD)/test_sudokusolver $(BENCHES) $(BUILD)/gendata $(BUILD)/watch
 
@@ -72,6 +72,14 @@ figs: $(BUILD)/sota_data/unpacked fastbandsolver.hpp paper/figs/dump.cpp paper/f
 # the paper, in build/paper/paper.pdf. needs a TeX installation with latexmk
 paper: | $(BUILD)
 	cd paper && latexmk -pdf -interaction=nonstopmode -output-directory=../$(BUILD)/paper paper.tex
+
+# the SEA submission: the short version in the LIPIcs style (paper/sea holds the class files)
+sea: | $(BUILD)
+	cd paper/sea && TEXINPUTS=..: BIBINPUTS=..: latexmk -pdf -interaction=nonstopmode -output-directory=../../$(BUILD)/sea sea.tex
+
+# the short version (no proofs, under 12 pages); shares refs.bib and figs/ with the full paper
+short: | $(BUILD)
+	cd paper/short && TEXINPUTS=..: BIBINPUTS=..: latexmk -pdf -interaction=nonstopmode -output-directory=../../$(BUILD)/short short.tex
 
 $(BUILD):
 	mkdir -p $(BUILD)

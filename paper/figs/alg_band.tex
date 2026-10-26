@@ -254,13 +254,13 @@
 \node[font=\tiny,text=gray,anchor=east] at (-0.05,0.390) {5};
 \end{tikzpicture}
 \\[0.5cm]
-{\small (e) bookkeeping for digit 6, band 0\\[2pt]
+{\footnotesize (e) bookkeeping for digit 6, band 0\\[2pt]
 \begin{tabular}{lll}\toprule field & before & after \\ \midrule
-\texttt{cells}$[5\cdot 3+0]$ (digit 6, band 0) & \texttt{306\,115\,302}$_8$ & \texttt{306\,010\,302}$_8$ \\
-\texttt{checked}$[5\cdot 3+0]$ & \texttt{347\,155\,342}$_8$ & \texttt{306\,010\,302}$_8$ \\
+\texttt{valueToBand}$[6-1][0]$ & \texttt{011\,000\,110\;\;001\,001\,101\;\;011\,000\,010} & \texttt{011\,000\,110\;\;000\,001\,000\;\;011\,000\,010} \\
+\texttt{checked}$[6-1][0]$ & \texttt{011\,100\,111\;\;001\,101\,101\;\;011\,100\,010} & \texttt{011\,000\,110\;\;000\,001\,000\;\;011\,000\,010} \\
 \texttt{openRows}$[5]$ (rows 8\ldots 0) & \texttt{110\,110\,111} & \texttt{110\,110\,101} \\
-\texttt{unsolved}$[0]$ & \texttt{766\,175\,742}$_8$ & \texttt{766\,165\,742}$_8$ \\
+\texttt{unsolved}$[0]$ & \texttt{111\,110\,110\;\;001\,111\,101\;\;111\,100\,010} & \texttt{111\,110\,110\;\;001\,110\,101\;\;111\,100\,010} \\
 \bottomrule\end{tabular}}
-\caption{\textsc{UpdateBand} (\cref{alg:band}) on digit 6 in band 0, taken from a real run on magictour puzzle 96. Small digits are candidates, large digits are solved cells, and digit 6 is blue. Struck-out candidates are the ones this call removes, coloured by the step that removes them: \textcolor{red}{red} by the band rule (line 3), \textcolor{orange!90!black}{orange} by the row-single placement (lines 10--16), \textcolor{violet!80!magenta}{violet} by the stack rule (line 7); cells that lose a candidate are shaded in the same colour. The band rule removes 6 from row 1 at columns 0, 2, 6, which leaves column 3 as the only place for 6 in row 1; so the row-single step places it there, shaded blue in (b), and removes 2 and 9 from that cell. Because band 0's set of columns for 6 changed, the stack rule runs and removes 6 from 4 cells of band 1, (c) and (d); these are in band 1, so they appear only in (c). In (e), the mask shrinks, \texttt{checked} records the band-rule result, row 1 leaves \texttt{openRows}, and the placed cell leaves \texttt{unsolved} (its bit 12).}
+\caption{\textsc{UpdateBand} (\cref{alg:band}) on digit 6 in band 0, taken from a real run on magictour puzzle 96. Small digits are candidates, large digits are solved cells, and digit 6 is blue. Struck-out candidates are the ones this call removes, coloured by the step that removes them: \textcolor{red}{red} by the band rule (line 3), \textcolor{orange!90!black}{orange} by the row-single placement (lines 10--15), \textcolor{violet!80!magenta}{violet} by the stack rule (line 7); cells that lose a candidate are shaded in the same colour. The band rule removes 6 from row 1 at columns 0, 2, 6, which leaves column 3 as the only place for 6 in row 1; so the row-single step places it there, shaded blue in (b), and removes 2 and 9 from that cell. Because band 0's set of columns for 6 changed, the stack rule runs and removes 6 from 4 cells of band 1, (c) and (d); these are in band 1, so they appear only in (c). In (e), the mask shrinks, \texttt{checked} records the band-rule result, row 1 leaves \texttt{openRows}, and the placed cell leaves \texttt{unsolved} (its bit 12).}
 \label{fig:alg-band}
 \end{figure}

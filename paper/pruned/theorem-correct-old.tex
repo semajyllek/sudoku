@@ -1,0 +1,37 @@
+\begin{theorem}[correctness]
+\label{thm:correct}
+For every input grid, \textsc{CountSolutions} with limit $L\ge 1$ returns $\min(L, n)$, where $n$ is the number of
+solutions that agree with the clues; \textsc{Solve} returns true exactly when $n\ge 1$, and then outputs such a
+solution. Both terminate and use at most 82 states.
+\end{theorem}
+\begin{proof}
+\emph{Load.} \textsc{Load} checks each clue $(x,d)$ against the candidates and then places it. A pair $(x,d)$ is removed
+before $x$'s clue is placed only by the placement of an earlier clue $d$ at a peer of $x$, since \textsc{Place} removes
+other digits only from its own cell. So the check fails exactly when two clues repeat a digit in a unit, and then
+$n=0$. Otherwise, the placements remove only pairs that no solution agreeing with the clues can use, and keep every
+clue, so $\mathrm{Sol}(S_0)$ is exactly the set of solutions that agree with the clues.
+
+\emph{Solved states.} Suppose \textsc{Propagate} returns \emph{solved}. Every cell is in some mask and none is in two,
+so each cell has exactly one candidate; let $G$ be the grid they form. By \cref{lem:fixedpoint}(e) every mask is nonzero, so by (b) and (c) every
+digit has a candidate in every row, column and box. A unit has nine cells, each with one candidate, and each of the nine
+digits appears among them at least once, so each appears exactly once: $G$ is a solution. Every consistent solution
+must equal $G$, so $\mathrm{Sol}(S)=\{G\}$.
+
+\emph{Branches.} At an \emph{open} state, the chosen cell $x$ has $m\ge 2$ candidates: two for a two-candidate cell, and
+for the fallback no unsolved cell has one (it would be a naked single) or none (a contradiction). For each candidate
+$d$, \textsc{Place}$(d, x)$ removes the other digits from $x$ and $d$ from the peers of $x$, which is exactly the set of
+pairs a solution with $\sigma(x)=d$ cannot use. So the children's solution sets are $\{\sigma\in\mathrm{Sol}(S):
+\sigma(x)=d\}$, which partition $\mathrm{Sol}(S)$.
+
+\emph{Counting.} We show by induction over the (finite) search tree that \textsc{Search} on a state $S$, entered with
+$f<L$ solutions found, leaves $\min(L, f+|\mathrm{Sol}(S)|)$ found. By \cref{lem:steps}, \textsc{Propagate} either
+returns a contradiction with $\mathrm{Sol}(S)=\emptyset$, or preserves $\mathrm{Sol}(S)$. A solved state records one
+solution, $|\mathrm{Sol}(S)|=1$ and $f+1\le L$. At a branch the children are searched in turn while fewer than $L$
+solutions have been found; by the induction hypothesis each adds its solutions up to the limit, and the solution sets
+are disjoint, so the total is $\min(L, f+\sum_d|\mathrm{Sol}_d|)=\min(L, f+|\mathrm{Sol}(S)|)$. For the second child of a
+two-candidate branch the parent's own slot is reused after \textsc{Propagate}, which did not change
+$\mathrm{Sol}(S)$. Applied to the root this gives $\min(L,n)$. \textsc{Record} copies out the first solution found,
+which is a solution by the previous paragraph, so \textsc{Solve} (limit 1) is correct. Termination and the bound of 82
+states are \cref{lem:termination}.
+\end{proof}
+

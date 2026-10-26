@@ -52,17 +52,17 @@ repo root so it can find `data/`.
 
 ### results
 
-compared with other solvers: seconds per puzzle, on tdoku's standard data sets, checking that each solution is
+compared with other solvers: microseconds per puzzle, on tdoku's standard data sets, checking that each solution is
 unique (a limit of 2 solutions, as in tdoku's benchmarks). Apple M4 Max, clang `-O3 -march=native`. every solver
 solves every puzzle correctly. from `make sota`:
 
   data set | puzzles | fastbandsolver | sudokusolver | tdoku | jsolve | kudoku
   --- | --- | --- | --- | --- | --- | ---
-  17 clue | 49158 | 1.64 × 10⁻⁶ | 1.53 × 10⁻⁵ | 2.63 × 10⁻⁶ | 2.71 × 10⁻⁶ | 1.33 × 10⁻⁵
-  magictour top 1465 | 1465 | 6.29 × 10⁻⁶ | 6.23 × 10⁻⁵ | 7.48 × 10⁻⁶ | 1.15 × 10⁻⁵ | 5.84 × 10⁻⁵
-  forum hardest 1106 | 375 | 5.70 × 10⁻⁵ | 4.50 × 10⁻⁴ | 6.69 × 10⁻⁵ | 1.35 × 10⁻⁴ | 5.09 × 10⁻⁴
-  forum hardest 1905 11+ | 48766 | 3.77 × 10⁻⁵ | 2.59 × 10⁻⁴ | 4.39 × 10⁻⁵ | 8.47 × 10⁻⁵ | 2.55 × 10⁻⁴
-  kaggle | 100000 | 8.24 × 10⁻⁷ | 1.51 × 10⁻⁶ | 8.90 × 10⁻⁷ | 1.49 × 10⁻⁶ | 7.18 × 10⁻⁶
+  17 clue | 49158 | 1.64 | 15.3 | 2.63 | 2.71 | 13.3
+  magictour top 1465 | 1465 | 6.29 | 62.3 | 7.48 | 11.5 | 58.4
+  forum hardest 1106 | 375 | 57.0 | 450 | 66.9 | 135 | 509
+  forum hardest 1905 11+ | 48766 | 37.7 | 259 | 43.9 | 84.7 | 255
+  kaggle | 100000 | 0.824 | 1.51 | 0.890 | 1.49 | 7.18
 
 - [tdoku](https://github.com/t-dillon/tdoku) is the fastest solver on hard puzzles in its own benchmark of the
   fastest known solvers. it only supports x86, so this uses its [ARM port](https://github.com/t-dillon/tdoku/pull/13)
@@ -82,18 +82,18 @@ git clone -b arm-neon https://github.com/semajyllek/tdoku ../tdoku
 ```
 
 sudokusolver on all 1000 boards of a file in `data/`, split across threads, one solver per thread
-(`build/bench_sudokusolver par`, clang `-O2`). the speedup is smaller on easy files, where starting threads costs
-about as much as the solving:
+(`build/bench_sudokusolver par`, clang `-O2`), in milliseconds for the whole file. the speedup is smaller on easy
+files, where starting threads costs about as much as the solving:
 
-  clues | 1 thread | 14 threads | speedup
+  clues | 1 thread (ms) | 14 threads (ms) | speedup
   --- | --- | --- | ---
-  22 | 8.9 × 10⁻³ | 9.7 × 10⁻⁴ | 9.2x
-  29 | 4.9 × 10⁻³ | 6.0 × 10⁻⁴ | 8.1x
-  39 | 1.9 × 10⁻³ | 3.4 × 10⁻⁴ | 5.6x
-  49 | 9.4 × 10⁻⁴ | 2.6 × 10⁻⁴ | 3.6x
-  59 | 6.5 × 10⁻⁴ | 2.8 × 10⁻⁴ | 2.4x
-  69 | 3.9 × 10⁻⁴ | 2.2 × 10⁻⁴ | 1.8x
-  79 | 2.4 × 10⁻⁴ | 2.2 × 10⁻⁴ | 1.1x
+  22 | 8.9 | 0.97 | 9.2x
+  29 | 4.9 | 0.60 | 8.1x
+  39 | 1.9 | 0.34 | 5.6x
+  49 | 0.94 | 0.26 | 3.6x
+  59 | 0.65 | 0.28 | 2.4x
+  69 | 0.39 | 0.22 | 1.8x
+  79 | 0.24 | 0.22 | 1.1x
 
 
 ### data

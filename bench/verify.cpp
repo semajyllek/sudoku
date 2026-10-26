@@ -29,7 +29,7 @@ bool validSolution(std::string const &puzzle, int const grid[9][9]) {
 			col |= 1 << grid[j][i];
 			box |= 1 << grid[i / 3 * 3 + j / 3][i % 3 * 3 + j % 3];
 		}
-		if (row != 01776 || col != 01776 || box != 01776) return false;
+		if (row != 0b111'111'111'0 || col != 0b111'111'111'0 || box != 0b111'111'111'0) return false;
 	}
 	return true;
 }

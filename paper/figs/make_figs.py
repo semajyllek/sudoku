@@ -124,21 +124,22 @@ def fig_update_band(j):
     tex.append(grid(s0, s3, rows1, range(9), size, 'after', f'(d) digit {d + 1} in band {ob}, after', only_digit=d))
     tex.append('\\\\[0.5cm]')
 
-    def octal(x):
-        s = f'{x:09o}'
-        return f'\\texttt{{{s[:3]}\\,{s[3:6]}\\,{s[6:]}}}$_8$'
+    def band_bits(x):
+        s = f'{x:027b}'
+        rows = ['\\,'.join(s[r + k:r + k + 3] for k in range(0, 9, 3)) for r in range(0, 27, 9)]
+        return '\\texttt{' + '\\;\\;'.join(rows) + '}'
 
     def rowbits(x):
         s = ''.join(str(x >> k & 1) for k in range(8, -1, -1))
         return f'\\texttt{{{s[:3]}\\,{s[3:6]}\\,{s[6:]}}}'
     un_before = sum(s0['unsolved'][b * 27 + k] << k for k in range(27))
     un_after = sum(s3['unsolved'][b * 27 + k] << k for k in range(27))
-    tex.append('{\\small (e) bookkeeping for digit %d, band %d\\\\[2pt]' % (d + 1, b))
+    tex.append('{\\footnotesize (e) bookkeeping for digit %d, band %d\\\\[2pt]' % (d + 1, b))
     tex.append('\\begin{tabular}{lll}\\toprule field & before & after \\\\ \\midrule')
-    tex.append(f'\\texttt{{cells}}$[{d}\\cdot 3+{b}]$ (digit {d + 1}, band {b}) & {octal(s0["cells"][i])} & {octal(s3["cells"][i])} \\\\')
-    tex.append(f'\\texttt{{checked}}$[{d}\\cdot 3+{b}]$ & {octal(s0["checked"][i])} & {octal(s3["checked"][i])} \\\\')
+    tex.append(f'\\texttt{{valueToBand}}$[{d + 1}-1][{b}]$ & {band_bits(s0["cells"][i])} & {band_bits(s3["cells"][i])} \\\\')
+    tex.append(f'\\texttt{{checked}}$[{d + 1}-1][{b}]$ & {band_bits(s0["checked"][i])} & {band_bits(s3["checked"][i])} \\\\')
     tex.append(f'\\texttt{{openRows}}$[{d}]$ (rows 8\\ldots 0) & {rowbits(s0["openRows"][d])} & {rowbits(s3["openRows"][d])} \\\\')
-    tex.append(f'\\texttt{{unsolved}}$[{b}]$ & {octal(un_before)} & {octal(un_after)} \\\\')
+    tex.append(f'\\texttt{{unsolved}}$[{b}]$ & {band_bits(un_before)} & {band_bits(un_after)} \\\\')
     tex.append('\\bottomrule\\end{tabular}}')
     rm_band = [(c // 9, c % 9) for c in range(81) if (s0['cands'][c] & ~s1['cands'][c])]
     rm_single = [(c // 9, c % 9, bits(s1['cands'][c] & ~s2['cands'][c])) for c in range(81) if (s1['cands'][c] & ~s2['cands'][c])]
@@ -148,7 +149,7 @@ def fig_update_band(j):
            f'magictour puzzle {j["index"] + 1}. Small digits are candidates, large digits are solved cells, and digit '
            f'{d + 1} is blue. Struck-out candidates are the ones this call removes, coloured by the step that removes them: '
            f'\\textcolor{{red}}{{red}} by the band rule (line 3), \\textcolor{{orange!90!black}}{{orange}} by the row-single '
-           f'placement (lines 10--16), \\textcolor{{violet!80!magenta}}{{violet}} by the stack rule (line 7); cells that lose a candidate are shaded in the same colour. The band rule removes '
+           f'placement (lines 10--15), \\textcolor{{violet!80!magenta}}{{violet}} by the stack rule (line 7); cells that lose a candidate are shaded in the same colour. The band rule removes '
            f'{d + 1} from row {rm_band[0][0]} at columns {", ".join(str(c) for _, c in rm_band)}, which leaves column {pcol} '
            f'as the only place for {d + 1} in row {pr}; so the row-single step places it there, shaded blue in (b), and '
            f'removes {" and ".join(str(k + 1) for k in rm_single[0][2])} from that cell. Because band {b}\'s set of columns '
@@ -164,7 +165,7 @@ def stack_matrix(state, d, s):
     m = []
     for band in range(3):
         mask = state['cells'][d * 3 + band]
-        cols = (mask | mask >> 9 | mask >> 18) & 0o777
+        cols = (mask | mask >> 9 | mask >> 18) & 0b111_111_111
         m.append([(cols >> (3 * s + jj)) & 1 for jj in range(3)])
     return m
 

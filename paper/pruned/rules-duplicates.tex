@@ -1,0 +1,49 @@
+\paragraph{The idea in plain terms.} Look at one digit, say 5, in one band. The finished grid will have exactly one 5
+in each of the band's three rows and exactly one in each of its three boxes. So the three 5s pair the rows with the
+boxes: each row gets its own box. Some pairings may already be impossible because 5 has been ruled out of that part of
+the row. If a particular row--box combination cannot be part of \emph{any} complete pairing, then 5 cannot go in that
+triad, even though nothing in the triad itself rules it out. This one idea, checked with a lookup table,
+covers locked candidates between rows and boxes, and it narrows a box that has a single place left for the digit down
+to a row with a single place left, which the solver then fills. The \emph{band rule} is this check. The \emph{stack rule} is the same check turned sideways: in a stack, the
+digit's three placements pair the stack's three columns with its three boxes, and each box of a stack lies in a
+different band, so this is a pairing of bands with columns.
+
+
+% ----------------------------------------------------------------
+\subsection{The $3\times 3$ support}
+
+\paragraph{Example.} Take the table of \cref{fig:band}, rows of the band against boxes:
+\[
+A=\begin{pmatrix} 1 & 1 & 0 \\ 1 & 1 & 0 \\ 1 & 1 & 1 \end{pmatrix}.
+\]
+Entry $(0,1)$, row 0 with box 1, is in $\mathrm{supp}(A)$: row 1 can then take box 0 and row 2 box 2, a perfect
+matching. Entry $(2,0)$, row 2 with box 0, is not: rows 0 and 1 would then both need box 1, since neither has box 2.
+So $(2,0)$ is removed, one of the two red entries in \cref{fig:band}(c).
+
+
+% ----------------------------------------------------------------
+\paragraph{The rules in the solver.} The band rule of \cref{alg:band} (line 3) keeps exactly the cells of triads in
+$\mathrm{supp}(A^{d,b})$, so by \cref{lem:band} it is sound, and a zero result is a correct contradiction. The stack rule
+(\cref{alg:stack}) keeps exactly the column pairs in $\mathrm{supp}(B^{d,s})$ for each stack, so by \cref{lem:stack} it
+is sound. Both rules are the matching constraints of Simonis~\cite{simonis2005sudoku}, Section 5.3. The locked-column step of
+JCZSolve is the special case of a band with one column in a stack: its row of
+$B^{d,s}$ has a single 1, which every perfect matching uses, so the column's entries in the other bands lie on no
+perfect matching.
+
+
+
+% ----------------------------------------------------------------
+The rule costs four table lookups: three 512-entry lookups turn the 27-bit band into the 9-bit matrix $A$, and a
+512-entry table maps $A$ to the cells of the triads that lie on a perfect matching. This is the core of the band
+solvers of \cref{sec:background}; it covers the consequences of the digit's row and box constraints within the band (locked candidates between rows
+and boxes), while placing a digit, and removing the other digits from its cell, is a separate step.
+
+Transposing the argument gives the \textbf{stack rule}. Within a stack, $d$ occurs once in each of its three columns
+and once in each of its three boxes, and the boxes of a stack correspond one-to-one to the bands. So $d$'s placement pairs the three bands one-to-one with the stack's three columns, and a (band,
+column) pair can be kept only if it lies on a
+perfect matching of the $3\times 3$ graph whose edges are the pairs where $d$ still has a candidate. The matrix is
+read from each band's 9-bit set of columns in use, so the rule costs three table lookups per digit, and it only has
+to run when some band's column set changes. It subsumes the locked-column step of JCZSolve, which removes a column
+from the other bands when a box of this band has candidates in that column alone: that is the special case of a
+band vertex with degree one. tdoku gets the same inference from its vertical triads.
+

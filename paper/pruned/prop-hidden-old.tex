@@ -1,0 +1,18 @@
+\begin{proposition}[box and column hidden singles are redundant]
+\label{prop:hidden}
+In a state returned by \textsc{Propagate} as open or solved, if digit $d$ has exactly one candidate cell $x$ in some box
+or some column, then $x$ is also $d$'s only candidate cell in its row, and $d$ is the only candidate of $x$. So adding
+rules for hidden singles in boxes and columns would never remove a candidate.
+\end{proposition}
+\begin{proof}
+Let $x$ be in row $r$ and box $k$ of band $b$. \emph{Box.} If $x$ is $d$'s only candidate in box $k$, then column $k$ of
+$A^{d,b}$ has its single 1 in row $r$, so every perfect matching sends $r$ to $k$, and no entry $(r,k')$ with $k'\neq
+k$ is in $\mathrm{supp}(A^{d,b})$. By \cref{lem:fixedpoint}(b) the band rule leaves $M_{d,b}$ unchanged, so row $r$ has
+no candidates outside box $k$, and inside box $k$ only $x$. \emph{Column.} If $x$ is $d$'s only candidate in its column
+$3s+j$, then column $j$ of $B^{d,s}$ has its single 1 in row $b$, so every perfect matching sends $b$ to $j$ and
+$\mathrm{supp}(B^{d,s})$ has no other 1 in row $b$. By \cref{lem:fixedpoint}(c), band $b$ has no candidates for $d$ in
+the other columns of stack $s$, so $d$'s candidates in box $k$ (which is band $b$'s part of stack $s$) all lie in column
+$3s+j$, where the only one is $x$. So $x$ is $d$'s only candidate in its box, and the box case applies. In both cases
+\cref{lem:fixedpoint}(d) shows that $d$ is the only candidate of $x$.
+\end{proof}
+

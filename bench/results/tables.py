@@ -1,5 +1,5 @@
 # prints the paper's x86 tables (LaTeX rows) from the logs in this directory
-import glob, os, re, sys
+import math, glob, os, re, sys
 
 SETS = ['puzzles2_17_clue', 'puzzles3_magictour_top1465', 'puzzles6_forum_hardest_1106',
         'puzzles5_forum_hardest_1905_11+', 'puzzles0_kaggle']
@@ -50,7 +50,10 @@ MACHINES = [
 LIMIT1 = {'gcp-n2-icl.txt': 'LIMIT1', 'gcp-c3-spr.txt': 'LIMIT1'}
 
 
-def num(x): return '\\num{%.2e}' % x
+def num(x):
+    """seconds -> microseconds with 3 significant figures, as the paper's tables give times"""
+    us = x * 1e6
+    return f'{us:.{max(0, 2 - math.floor(math.log10(us)))}f}'
 
 
 def paper_tables():

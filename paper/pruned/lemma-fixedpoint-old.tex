@@ -1,0 +1,60 @@
+The next lemma handles a corner case of the update loop: a mask that is zero from the start equals its checked copy
+$K=0$, so the loop never visits it.
+
+\begin{lemma}[no empty masks]
+\label{lem:nonzero}
+If \textsc{Update} returns without a contradiction, every mask is nonzero and has been updated at least once.
+\end{lemma}
+\begin{proof}
+A mask that is nonzero after \textsc{Load} has $K=0\neq M$, so it is updated. If a mask becomes zero after being
+updated, then by (I2) it differs from $K$, so it is updated again, and the band rule of the zero mask gives zero: a
+contradiction. It remains to consider a mask $M_{d,b}$ that is zero right after \textsc{Load}. Suppose some other mask
+of $d$ is nonzero. On its first update its column set differs from that of $K=0$, so \textsc{StackRule}$(d)$ runs; band
+$b$ has no columns, so in every stack row $b$ of $B^{d,s}$ is zero, no perfect matching exists, and every mask of $d$
+is cleared. The updated mask then differs from its checked copy and its next update reports a contradiction. Suppose
+instead all three masks of $d$ are zero after \textsc{Load}. \textsc{Load} removes $d$ from a cell only when the cell
+holds a clue other than $d$, or a peer holds the clue $d$; and \textsc{Place} keeps $d$ at a cell holding the clue $d$.
+So there is no clue $d$, and every cell holds a clue. Then 81 clues use at most 8 digits, some row repeats a digit, and
+\textsc{Load} fails, a contradiction.
+\end{proof}
+
+\begin{lemma}[the fixed point]
+\label{lem:fixedpoint}
+Suppose \textsc{Propagate} returns \emph{open} or \emph{solved}. Then in the returned state:
+\begin{enumerate}
+\item[(a)] every mask $M_{d,b}$ is nonzero and the band rule leaves it unchanged, so $A^{d,b}$ has a perfect matching
+  and $d$ has a candidate in every row and every box of band $b$;
+\item[(b)] for every digit $d$ and stack $s$, $\mathrm{supp}(B^{d,s})=B^{d,s}\neq 0$, so $d$ has a candidate in every
+  column of stack $s$;
+\item[(c)] if $d$ has exactly one candidate cell $x$ in some row, then $d$ is the only candidate of $x$.
+\end{enumerate}
+\end{lemma}
+\begin{proof}
+\textsc{Propagate} returns after an \textsc{Update} that succeeded and a count that placed nothing, so no mask changed
+after the last pass of \textsc{Update}, and in that pass no \textsc{UpdateBand} ran: $M=K$ for every mask.
+
+(a) By \cref{lem:nonzero} every mask is nonzero and was updated. Consider the last \textsc{UpdateBand} on
+$M_{d,b}$. It set $K$ to $M' = M\,\&\,\textsc{PossibleCells}[A]$, and since $M=K$ at the end and masks only shrink, the
+mask was $M'$ from then on. The box-candidate matrix of $M'$ is $\mathrm{supp}(A)$ (proof of \cref{lem:singlerows}), so
+applying the band rule again keeps the triads of $\mathrm{supp}(\mathrm{supp}(A))=\mathrm{supp}(A)$
+(\cref{lem:idempotent}), that is, all of $M'$. As $M'\neq 0$, $\mathrm{supp}(A)\neq 0$ has a 1 in every row and column,
+so $d$ has a candidate in every row and box of the band.
+
+(b) Fix $d$. We first show: whenever a column set $P(M_{d,b})$ changes, \textsc{StackRule}$(d)$ runs afterwards. If the
+change is made by the band rule inside \textsc{UpdateBand} on $M_{d,b}$, then the new column set is a proper subset of
+$P(K)$ for the old $K$ (by (I2), or because $K=0$), so the comparison in line 7 differs and the stack rule runs in the
+same call. If the change is made anywhere else, then afterwards $M_{d,b}\neq K_{d,b}$, so \textsc{UpdateBand} runs on
+it again before \textsc{Update} returns, and in that call the column set is a proper subset of $P(K)$, so the stack
+rule runs. The first update of each mask counts as a change, since it compares with $P(0)=0$ and a nonzero mask has
+$P(M)\neq 0$. Now let $t$ be the last
+time any column set of $d$ changes. The stack rule runs after $t$, and that run changes no column set, so in every
+stack it found $\mathrm{supp}(B^{d,s})=B^{d,s}$ for the final column sets. By (a), each box of the stack has a candidate
+of $d$, so every row of $B^{d,s}$ is nonzero, $B^{d,s}\neq 0$, and by \cref{lem:idempotent} it has a 1 in every
+column.
+
+(c) Let $x$ be in band $b$. Consider the last \textsc{UpdateBand} on $M_{d,b}$; as in (a), the mask did not change after
+it, so its row-single step saw the final mask, and by \cref{lem:singlerows} it found the row of $x$ to be single. If the
+row was open, the step cleared $x$ from the other digits. If not, (I3) applies: $d$ has one candidate cell in the row,
+which is $x$, and $x$ has no other candidate. By (I0) this still holds at the end.
+\end{proof}
+

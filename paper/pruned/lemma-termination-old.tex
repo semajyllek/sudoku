@@ -1,0 +1,21 @@
+\begin{lemma}[termination and depth]
+\label{lem:termination}
+\textsc{Update}, \textsc{Propagate} and \textsc{Search} terminate. If \textsc{Search} runs on the state in slot $t$ of
+the array, then the unsolved cells number at most $81-t$, and a child is written to slot $t+1$ only when $t\le 80$. So
+the 82 slots suffice.
+\end{lemma}
+\begin{proof}
+\emph{Update.} Let $N$ be the number of masks with $M_{d,b}\neq K_{d,b}$, and consider the pair
+$\Phi=(|C(S)|, N)$ ordered lexicographically. Each call of \textsc{UpdateBand} strictly decreases $\Phi$: if it
+removes any candidate, $|C(S)|$ decreases; otherwise every mask is unchanged, and the mask it was called on, which had
+$M\neq K$, now has $K=M$, so $N$ decreases by one. Since $|C(S)|\le 729$ and $N\le 27$, there are finitely many calls,
+and every pass of \textsc{Update} except the last makes at least one.
+\emph{Propagate.} Each repetition of its loop follows a naked-single placement, which removes a cell of $U$ (the loop
+only visits cells in $U$), and $U$ never grows; so there are at most 81 repetitions.
+\emph{Search.} \textsc{Place} removes the chosen cell from $U$. The cell is in $U$: a two-candidate cell by (I1), and a
+fallback cell because it is chosen from $U$. Slot $t+1$ is filled from slot $t$ by \textsc{Place}, so by induction the
+state in slot $t$ has at most $81-t$ unsolved cells; the second child of a two-candidate branch reuses slot $t$ after
+another \textsc{Place}, which only lowers the count. A branch needs an unsolved cell, so it happens only when
+$81-t\ge 1$. The search tree has depth at most 81 and branching at most 9, so it is finite.
+\end{proof}
+

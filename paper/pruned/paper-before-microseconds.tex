@@ -1,0 +1,2263 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{cancel}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{microtype}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage[hidelinks]{hyperref}
+\usepackage[capitalise]{cleveref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{plain}
+% the environments share one counter, so tell cleveref which name to print for each (otherwise every one is "Theorem")
+\AddToHook{env/lemma/begin}{\crefalias{theorem}{lemma}}
+\AddToHook{env/proposition/begin}{\crefalias{theorem}{proposition}}
+\AddToHook{env/corollary/begin}{\crefalias{theorem}{corollary}}
+\AddToHook{env/definition/begin}{\crefalias{theorem}{definition}}
+
+\sisetup{detect-all, exponent-product=\times}
+\let\origtextsc\textsc
+\renewcommand{\textsc}[1]{\textup{\origtextsc{#1}}}
+
+\title{Fewer, Better Guesses: A Scalar Band Solver,\\and When It Beats SIMD Sudoku Solvers}
+\author{James Kelly}
+\date{September 2026}
+
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\textfraction}{0.1}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\begin{minipage}{0.85\textwidth}
+\small\textbf{AI use.} This work was done depending heavily on Anthropic's LLM harness Claude (Claude Code), using the model Claude Opus~5.5 with occasional advisory support from Claude Fable, including in theorizing, experimentation, and writeup.
+\end{minipage}
+\end{center}
+
+
+\begin{abstract}
+The fastest published solver for hard Sudoku puzzles, tdoku, combines a SIMD encoding of the grid with strong propagation, and on x86 its author's benchmark shows it well ahead of the other fast solvers on hard puzzles. We ported tdoku to ARM NEON and
+found that on Apple Silicon its lead over scalar solvers shrinks, but it still wins on the hardest puzzles. We then
+built FastBandSolver, a scalar solver on the band representation of zhouyundong and JCZSolve (a band is a row of
+three boxes; the representation stores each digit's candidates per band as a bit mask), and made three changes:
+(1) a \emph{stack rule} that prunes each digit's columns within each column of three boxes, keeping only choices that fit a one-to-one pairing of bands with columns (a perfect matching), a constraint Simonis
+formulated for constraint models in 2005, here applied by table lookup in a band solver; (2) branching on the
+two-candidate cell with the most unsolved peers (the classic degree tie-break) instead of the first one found;
+(3) a fewest-candidates fallback when no two-candidate cell exists. On an Apple M4 Max, checking uniqueness (a
+solution limit of 2) as in tdoku's benchmarks, FastBandSolver is 1.07--1.62$\times$ faster than native tdoku on all
+five of tdoku's standard data sets, including 1.17$\times$ on the 375 hardest forum puzzles; when only one solution is needed (a limit of
+1) it is also fastest on all five, by 1.07--1.61$\times$. An ablation attributes
+the gain mainly to branching: the search makes 138 guesses per puzzle on that set where JCZSolve makes 363. On x86 the result depends on the processor. Measured on seven x86 cloud machines, FastBandSolver is level with or
+faster than tdoku on AMD Zen~3 (1.00--1.47$\times$), slightly slower on the hard sets on AMD Zen~4 (0.92--0.96$\times$),
+and about 0.7 times tdoku's speed on Intel Ice Lake and Sapphire Rapids. Hardware counters show why: on x86, tdoku
+needs 0.60--0.67 times FastBandSolver's instructions, against 1.29 times on the M4, where its 256-bit operations
+become pairs of NEON instructions; on the same x86 binary, Intel cores run tdoku's code faster per cycle than AMD's,
+and AVX-512 saves it another 12\% of its cycles. On many cores, running one puzzle per core, FastBandSolver also has the
+highest throughput at every core count; a parallel version that splits one puzzle's search between threads solves the
+hardest puzzles $2.1\times$ faster on 4 threads. We also report six approaches that did not beat tdoku, with measurements: template (pattern-overlay) search, several search-tree nodes in SIMD lanes, interleaving sibling branches, lookahead
+probing, triad rules, and joining band fillings.
+\end{abstract}
+
+\section{Introduction}
+
+Solving a single Sudoku is easy for a computer, but solving and \emph{proving uniqueness} of millions of hard
+puzzles quickly matters to puzzle generators, to difficulty raters and to exhaustive searches such as the proof
+that no 16-clue Sudoku exists~\cite{mcguire2014sixteen}. Deciding whether a partial Latin-square-like puzzle has another
+solution is NP-complete~\cite{yato2003complexity}, so every fast solver is a search with propagation, and the design space is
+the classic one of constraint programming~\cite{simonis2005sudoku} and SAT~\cite{lynce2006sudoku}: how much inference to do at
+each node, and where to branch.
+
+The current reference point is tdoku~\cite{dillon2019tdoku,dillon2019nerdsniped}. It encodes the grid in 128- or
+256-bit SIMD registers, reasons about \emph{triads} (the three cells of a row or column within a box) in both
+orientations, and in its author's benchmark it is well ahead of the other fast solvers on hard puzzles, though slower than two of them on the easiest ones (\cref{sec:related}). tdoku targets x86 SSE and AVX; to compare on ARM, we added native NEON support
+to it~\cite{kelly2026tdokuarm}. On Apple Silicon the picture changes (\cref{sec:arm}): scalar solvers run much faster than on tdoku's published Intel machine, while tdoku does not, and the scalar band solver JCZSolve~\cite{jczsolve2016} already beats tdoku on the
+17-clue set, but tdoku keeps its lead on the hardest puzzles.
+
+This paper asks whether a scalar solver can beat tdoku on the hard sets too, and answers yes on the M4; on x86 the
+answer depends on the processor. \Cref{sec:terms}
+explains the background for readers new to the area: the parts of the grid, propagation and search, bitmasks, and
+perfect matchings. Our contributions:
+
+\begin{itemize}
+\item \textbf{FastBandSolver}, an open-source C++ solver (\cref{sec:solver}) that is faster than native tdoku on all
+  five of tdoku's standard data sets on an Apple M4 Max (\cref{tab:sota}).
+\item A \textbf{stack rule} (\cref{sec:rules}): each digit's use of columns within a stack is a perfect matching
+  of bands to columns, and pruning edges that lie on no perfect matching subsumes locked candidates. The constraint
+  is Simonis's~\cite{simonis2005sudoku}; our contribution is applying it with one table lookup inside a band solver,
+  only when a band's columns change. Together with the band rule, it makes box and column hidden singles redundant
+  in any state that has a solution (\cref{prop:hidden}).
+\item \textbf{Measurements on x86} (\cref{sec:x86}): on seven cloud machines FastBandSolver is level with or
+  faster than tdoku on AMD Zen~3, slightly slower on Zen~4 and about 0.7 times its speed on recent Intel processors,
+  and hardware counters and cycle measurements on ten processors separate the instruction set, the core and
+  AVX-512 as causes (\cref{sec:why}).
+\item \textbf{Proofs} (\cref{sec:rules,sec:proofs}) that the rules are sound and that the solver counts solutions
+  exactly, terminates, and stays within its fixed array of states.
+\item An \textbf{ablation}, switching each of our changes off in turn, (\cref{tab:ablation}) showing that branching, not propagation, carries most of the gain:
+  picking the two-candidate cell with the most unsolved peers cuts the tree by 45\% at almost no cost, and a
+  fewest-candidates fallback removes another 12\% of the time on the hardest set, even though it fires at only 1\%
+  of branch nodes.
+\item \textbf{Multi-core results} (\cref{sec:multicore}): higher throughput than tdoku at every number of cores on the M4, an analysis showing that about 96\% of the search trees' work (counted in band updates) could run in parallel, and ParallelBandSolver, which halves the time
+  of the hardest puzzles with 4 threads, with what limits it.
+\item \textbf{Negative results} with measurements (\cref{sec:negative}): complete per-digit template inference,
+  running search-tree nodes in SIMD lanes, lookahead, triad rules, and band decomposition all fail to beat tdoku
+  here, and we say why.
+\end{itemize}
+
+\section{Background: how fast Sudoku solvers work}
+\label{sec:terms}
+
+This section explains the ideas the rest of the paper relies on, for readers who know some programming but not the
+Sudoku-solving literature. Readers who know it can skip to \cref{sec:related}.
+
+\subsection{The puzzle and its parts}
+
+A Sudoku grid has 81 \emph{cells} arranged in 9 \emph{rows} and 9 \emph{columns}, and divided into 9 \emph{boxes}, the
+$3\times 3$ blocks outlined in \cref{fig:grid}. Rows, columns and boxes are together called \emph{units}. A puzzle
+fills in some cells, the \emph{clues}, and the goal is to fill in the rest so that each digit 1--9 appears exactly
+once in every unit. A well-formed puzzle has exactly one solution. The \emph{peers} of a cell are the 20 other cells
+that share a row, column or box with it; a cell's digit can never appear in any of its peers.
+
+Two larger structures matter in this paper. A \emph{band} is a horizontal strip of three boxes: rows 1--3, 4--6 or
+7--9, 27 cells in all. A \emph{stack} is a vertical strip of three boxes: columns 1--3, 4--6 or 7--9. There are three
+bands and three stacks, and each box is where one band and one stack cross. Within a band, the three cells where a row
+crosses a box form a \emph{horizontal triad}, so each band has nine of them; within a stack, the three cells where a
+column crosses a box form a \emph{vertical triad}. The term is tdoku's~\cite{dillon2019nerdsniped}. The band rule only
+uses horizontal triads, so from here on a \emph{triad} without a direction is a horizontal one. When
+we look inside a single band we number its rows and its boxes 0--2 and its columns 0--8.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=0.42cm,y=0.42cm]
+  \fill[blue!12] (0,3) rectangle (9,6);          % a band (the middle one)
+  \fill[orange!20] (6,0) rectangle (9,9);        % a stack (the right one)
+  \fill[orange!20!blue!18] (6,3) rectangle (9,6);% their shared box
+  \fill[red!35] (3,4) rectangle (6,5);           % a triad
+  \draw[step=1,gray!60,very thin] (0,0) grid (9,9);
+  \draw[very thick] (0,0) rectangle (9,9);
+  \foreach \x in {3,6} { \draw[thick] (\x,0) -- (\x,9); \draw[thick] (0,\x) -- (9,\x); }
+  \node[right] at (9.4,4.5) {\small band (rows 4--6)};
+  \node[above] at (7.5,9.1) {\small stack (columns 7--9)};
+  \draw[->] (-0.6,4.5) node[left] {\small a triad} -- (2.9,4.5);
+\end{tikzpicture}
+\caption{The parts of a Sudoku grid used in this paper. The shaded horizontal strip is a band, the shaded vertical
+strip is a stack, and their overlap is a box. The dark cells are a triad: the three cells where a row of the band
+crosses one of its boxes.}
+\label{fig:grid}
+\end{figure}
+
+\subsection{Candidates and propagation}
+
+A solver keeps, for every empty cell, the set of digits that could still go there: its \emph{candidates}. At the start a
+cell's candidates are the digits not already used by a clue among its peers. Solving then alternates between two
+activities. \emph{Propagation} applies logical rules that remove candidates which cannot be part of any solution, and
+\emph{search} makes a guess when the rules run out.
+
+The simplest rules are the ones human solvers learn first:
+\begin{itemize}
+\item A \emph{naked single} is a cell with only one candidate left: that digit must go there.
+\item A \emph{hidden single} is a digit that has only one possible cell left in some unit. For example, if in row 5
+  the digit 7 is a candidate in only one cell, then 7 goes there, even if that cell has other candidates too. When the
+  unit is a row we call it a \emph{row single}.
+\item \emph{Locked candidates} use the overlap between a box and a row or column. For example, if every candidate for 3
+  in the top-left box lies in column 2, then the 3 of that box must be in column 2, so 3 can be removed from column 2
+  in the other two boxes of the stack.
+\end{itemize}
+Placing a digit removes it from all the cell's peers, which can create new singles, so rules are applied repeatedly
+until nothing changes. That state is called a \emph{fixed point}. Human solvers know many more rules (pairs, X-wings,
+chains and so on); fast computer solvers use only a few cheap ones and search for the rest.
+
+\subsection{Search, guesses and uniqueness}
+
+When propagation stops but cells are still empty, the solver picks a cell and tries its candidates one at a time.
+Each try copies the current state, places the digit, and propagates again; if that leads to a cell with no candidates,
+the try is a dead end and the solver \emph{backtracks} to the next candidate. This is depth-first search. Its tries
+form a \emph{search tree}: each \emph{node} is a state after propagation, and each branch is a guess. We count a cell
+with two candidates as one \emph{guess} (one binary decision) and a cell with $n$ candidates as $n-1$.
+
+The benchmark used throughout this paper asks each solver to find up to two solutions (a \emph{solution limit} of 2).
+Finding one solution shows the puzzle is solvable; failing to find a second one proves it is \emph{unique}. For a
+well-formed puzzle that means the solver cannot stop at the first solution: it must rule out every other branch of the
+tree. So the total time is roughly
+\[
+\text{time} \approx (\text{nodes in the search tree}) \times (\text{time per node}).
+\]
+Stronger rules make the tree smaller but each node slower; cheaper rules do the opposite. The choice of \emph{which}
+cell to guess on also changes the size of the tree, sometimes by a large factor, at little cost per node. This
+trade-off is the subject of the paper.
+
+\subsection{Sets as bits}
+
+Fast solvers do not store candidates as lists. They store a set of up to 32 small numbers as the bits of one 32-bit
+integer, a \emph{bitmask}: bit $i$ is 1 when $i$ is in the set. Set operations then become single processor
+instructions: intersection is bitwise AND ($\&$), union is OR ($\mid$), removing elements is AND with the complement
+($\lnot$), and shifting the bits left or right ($\ll$, $\gg$) moves every element by the same amount at once. The
+\emph{popcount} instruction counts the 1-bits, which is the size of the set. For example, the set $\{0, 2, 3\}$ is the
+bitmask $1101_2 = 13$, and ANDing it with $\{2,3,4\} = 11100_2$ gives $\{2,3\} = 1100_2$ in one instruction.
+
+We write bitmasks in binary with the bits in groups of three, because Sudoku is built from threes, and the code
+does the same with C++14 binary literals such as \texttt{0b111'111'111}. For example $111_2 = 7$ is three 1-bits,
+$111\,111\,111_2 = 511$ is nine, the mask of all nine columns of one row, and
+$100\,001\,000\;\;000\,000\,101\;\;000\,010\,010_2$ is a 27-bit mask whose nine groups are the nine triads of a band, with a wider gap
+between rows (\cref{sec:state}).
+
+A \emph{lookup table} is a precomputed array: instead of computing a function of a small input at run time, the solver
+reads the answer from memory, indexed by the input. A 9-bit input has only $2^9 = 512$ possible values, so any function
+of 9 bits can be tabulated in a 512-entry array. The solvers in this paper rely heavily on such tables.
+
+\subsection{What makes code fast on a modern processor}
+
+A modern processor core executes several instructions per clock cycle, as long as they do not depend on each other.
+The number actually achieved is the \emph{IPC} (instructions per cycle). Two things lower it in search code.
+\emph{Branch mispredictions}: the processor guesses the outcome of each \texttt{if} ahead of time, and a wrong guess
+discards the work done after it; search code has many data-dependent branches. \emph{Dependency chains}: an
+instruction that needs the result of the previous one has to wait for it. \emph{SIMD} (single instruction, multiple
+data) instructions operate on a wide register holding several small values at once, for example eight 16-bit numbers
+in a 128-bit register. x86 processors offer 128-bit (SSE) and 256-bit (AVX2) SIMD; ARM processors such as Apple's
+offer 128-bit SIMD called NEON. A solver whose data fits a SIMD register can process a whole box or band in a few
+instructions; a \emph{scalar} solver uses ordinary 32- or 64-bit integers.
+
+\subsection{Bipartite graphs and matchings}
+
+A \emph{bipartite graph} has two sets of vertices, $U$ and $V$, and edges that each join a vertex of $U$ to a vertex
+of $V$. A \emph{perfect matching} is a set of edges that uses every vertex exactly once. When $|U|=|V|=3$ there are
+$3!=6$ ways to pair the vertices of $U$ one-to-one with those of $V$, and a perfect matching is one of these six whose
+three pairs are all edges. We write such a graph as its \emph{biadjacency matrix}, the $3\times 3$ 0-1 matrix $A$ with
+$A_{uv}=1$ when $u$ and $v$ are joined; a perfect matching is then a permutation matrix that fits inside $A$. An edge
+that lies on no perfect matching can be deleted when every vertex must be matched, since no complete pairing uses it.
+By Hall's theorem~\cite{hall1935representatives}, a perfect matching exists exactly when every set of $k$ vertices on
+one side is joined to at least $k$ vertices on the other. R\'egin's filtering algorithm for \texttt{alldifferent}
+constraints~\cite{regin1994filtering} deletes every such edge of a $9\times 9$ graph of cells against digits, and
+constraint solvers use it for Sudoku~\cite{simonis2005sudoku}. Our rules (\cref{sec:rules}) apply the same idea to
+$3\times 3$ graphs, which are small enough that every case can be precomputed in a 512-entry table.
+
+\section{Related work}
+\label{sec:related}
+\label{sec:background}
+
+Sudoku has been attacked with every general-purpose search technique, and a community of hobbyist programmers,
+largely on the Sudoku Players' Forum, has spent two decades making special-purpose solvers fast. This section
+describes what the solvers we build on and compare with actually do, from their source code and their authors'
+write-ups, and then says exactly what we took from each.
+
+\subsection{Three general encodings}
+
+\paragraph{Exact cover.} A Sudoku is an \emph{exact cover} problem. A \emph{choice} puts one digit in one cell, so
+there are $81\times 9=729$ choices. A \emph{constraint} must be satisfied exactly once, and there are four families of
+81: each of the 81 cells holds one digit; each of the 9 rows holds each of the 9 digits once, $9\times 9=81$; likewise
+each column, $81$; and each box, $81$. That is $4\times 81=324$ constraints. Every choice satisfies exactly four of
+them, one per family: a 5 in the top-left cell fills that cell and puts a 5 in the top row, in the left column and in
+the top-left box. A solution
+is a set of choices that satisfies every constraint exactly once; since each choice covers 4 of the 324, it has
+$324/4=81$ choices, one per cell. Knuth's \emph{dancing links} algorithm (Algorithm X
+with a linked-list representation) solves exact cover problems and discusses Sudoku at length in
+\emph{The Art of Computer Programming}~\cite{knuth2022taocp4b}. kudoku~\cite{attractivechaos2011kudoku}, the fastest
+exact-cover solver in tdoku's benchmark, uses this formulation without dancing links: it stores for each choice its 4
+constraints and for each constraint its 9 choices, keeps a count of the remaining choices per constraint, always
+branches on the constraint with the fewest remaining choices, and undoes a branch by reversing the counts rather than
+copying the state. Its source describes it as a faster version of Stertenbrink's \texttt{suexco.c}. In this
+formulation naked and hidden singles happen automatically (a constraint with one choice left), but locked candidates
+do not.
+
+\paragraph{SAT.} Lynce and Ouaknine~\cite{lynce2006sudoku} encoded Sudoku as a Boolean satisfiability problem, with
+a variable for each (cell, digit) pair and clauses saying each cell has a digit and no unit has a digit twice, and related SAT propagation techniques to human solving techniques. The standard SAT algorithm DPLL
+alternates \emph{unit propagation} (a clause with one literal left forces it) with branching.
+
+\paragraph{Constraint programming.} Simonis~\cite{simonis2005sudoku} modelled Sudoku with \texttt{alldifferent}
+constraints, one per unit, and compared how strongly different propagation methods filter them. He also added
+redundant constraints for the interactions between units. One of them (his Section 5.3) is our band rule: for each
+value, a bipartite matching between the three rows of a band and its three blocks, with an edge wherever the value is
+still possible, removing the value from any row--block pair on no matching; he notes the same constraint for columns
+and blocks, which is our stack rule, and counts 54 such constraints. He solves each with a general matching algorithm
+(a maximum matching plus strongly connected components). The strongest
+standard method is R\'egin's algorithm~\cite{regin1994filtering}, which models an \texttt{alldifferent} constraint as a
+bipartite graph between variables and values and removes exactly the edges that lie on no matching covering every variable (a perfect matching, when there are as many values as variables). Our band and stack rules are Simonis's constraints, applied
+with a precomputed 512-entry table instead of a matching algorithm, which is what makes them cheap enough for a
+solver that spends tens of nanoseconds per node.
+
+\subsection{Fast cell-based solvers}
+
+\paragraph{Norvig.} Norvig's widely read 2006 essay~\cite{norvig2006sudoku} stores the candidates of each cell as a
+string of digits in a dictionary, and uses two rules: if a cell has one candidate, remove it from its peers (naked
+singles); if a unit has one place for a digit, put it there (hidden singles). It searches depth first, choosing the
+cell with the fewest candidates, the \emph{minimum remaining values} heuristic of Haralick and
+Elliott~\cite{haralick1980increasing}, and copies the whole state at each guess. It is written for clarity, not speed.
+
+\paragraph{JSolve.} Linhart's JSolve~\cite{linhart2010jsolve}, which tdoku's documentation traces back to the earlier
+bb\_sudoku, keeps a 9-bit candidate mask per cell and a mask of placed digits per unit. It propagates naked singles
+through a queue of pending placements, finds hidden singles with bitwise ``seen once / seen more than once'' masks per
+unit, and applies locked candidates to groups of three-cell strips. It guesses on the cell with the fewest candidates,
+stopping its scan as soon as it finds a cell with two, and saves the board on a stack to undo a guess.
+
+\paragraph{FSSS and fsss2.} Dobrichev's FSSS (2010) is a cell-based solver of the same kind. fsss2~\cite{dobrichev2014fsss2}
+(2014) switches to a per-digit layout: for each digit, one 128-bit word whose bits 0--80 mark the cells where the
+digit is possible and whose upper bits mark the units where it is not yet placed. Naked singles are found by counting,
+across the nine digit words, how many digits each cell admits, using bit-parallel adders that process all 81 cells at
+once; hidden singles by checking each unsolved unit for a single bit; and locked candidates and naked pairs are
+compile-time options. By default it guesses on a cell with the fewest candidates, taking the lowest digit and the
+leftmost cell. Its source also contains experimental alternative guess strategies, switched off by default, including
+choosing by the number of direct eliminations; a comment notes one of them as slower than another alternative.
+
+\subsection{Band solvers: zhouyundong, JCZSolve and rust\_sudoku}
+
+In 2012 the forum user zhouyundong\_2012 posted a solver~\cite{zhouyundong2012solver} built on a different layout,
+which we call the \emph{band representation}: one 32-bit word per (digit, band), whose 27 low bits mark the cells of the
+band where the digit is still possible. The forum members champagne and JasonLion refined it into
+JCZSolve~\cite{jczsolve2016}, whose header credits zhouyundong with ``storing bands by digit and the Update routine'',
+and champagne with ``the pairing of ApplySingleOrEmptyCells and GuessBiValueInCell''. Emerentius ported it to
+Rust~\cite{emerentius2018sudoku}. Because FastBandSolver starts from this design, we describe JCZSolve in detail.
+
+\paragraph{Update.} For each (digit, band) word that changed since the last pass, JCZSolve does the following with
+512-entry lookup tables. It compresses each 9-bit row into the 3 boxes the digit can still use in that row, giving a
+$3\times 3$ row-by-box pattern for the band. A second table keeps only the parts of that pattern that some valid
+assignment of rows to boxes can use, and returns zero, a contradiction, if there is none. This is the band rule of
+\cref{sec:rules}, though the source does not describe it in terms of matchings. A third table, indexed by the columns
+the digit still uses in the band, removes from the other two bands every column that is the only column left in one
+of this band's boxes: locked candidates from a box into a column. Further tables detect rows that are down to one
+cell, and those cells are removed from the other eight digits' words. Emerentius notes that over 80\% of the solver's
+time is spent in this routine.
+
+\paragraph{Singles and guessing.} After the updates, \texttt{ApplySingleOrEmptyCells} counts, for each band, how many
+digits each cell admits, with three 27-bit words meaning ``at least one'', ``at least two'' and ``at least three''
+(the same trick as fsss2's adders, on one band at a time). Cells with none are a contradiction, cells with one are
+placed, and cells with exactly two are saved, so the next step, \texttt{GuessBiValueInCell}, has a list of
+two-candidate cells for free. It guesses on the first of them in board order, copying the state into the next slot of
+a fixed array. If there is none, \texttt{GuessFirstCell} tries every candidate of the first unsolved cell; its
+comment reads ``Kind of dumb, but \_way\_ fast code''. rust\_sudoku keeps this design, removes one hard-to-predict
+branch, and when there is no two-candidate cell checks up to three cells and guesses the one with the fewest
+candidates.
+
+\subsection{tdoku}
+
+Dillon's tdoku~\cite{dillon2019tdoku,dillon2019nerdsniped} approaches Sudoku as a SAT problem and then specializes the
+SAT machinery until it fits in SIMD registers. His write-up is a careful study of the design space, and we follow its
+benchmark methodology.
+
+\paragraph{From DPLL to triads.} The write-up starts from DPLL with a variable per (cell, digit), adds clauses saying
+that each row, column and box contains each digit, so that hidden singles follow from unit propagation, and observes
+that locked candidates are exactly the deductions this still misses. To capture them it adds new variables for the
+triads, horizontal and vertical: a triad variable for digit $v$ is true when $v$ is in that triad. Rows,
+columns and boxes then become ``exactly one of these three triads'' constraints, and each triad must contain exactly
+three digits. All of these are cardinality constraints, applied by one rule: when the number of literals still possible
+equals the number required, all of them are asserted.
+
+\paragraph{Band configurations.} For one digit, the nine triads of a band can only be true in six patterns, one per
+assignment of the band's rows to its boxes; the write-up calls these \emph{configurations}. tdoku stores, for each band
+(horizontal and vertical) and each of its six configurations, the 9-bit set of digits that can still take it. The
+write-up notes that configurations add no new deductions, but ``do in one step what previously might have required
+multiple steps''. The six configurations of a band are the six one-to-one pairings of its rows with its boxes (\cref{sec:terms}), so tdoku's band
+state is our band rule in a different form, maintained for rows and columns alike.
+
+\paragraph{SIMD layout and propagation.} Each box is one 256-bit register viewed as a $4\times 4$ matrix of 16-bit
+lanes: the $3\times 3$ part holds the candidate sets of the box's nine cells, and the extra row and column hold the box's triad variables. Propagation is message passing: a box sends eliminations to its horizontal and vertical bands, and a band
+turns its remaining configurations back into allowed triads and restricts its three boxes. Every step is branch-free
+SIMD code. On x86 without AVX2, and on our ARM port, each 256-bit value is a pair of 128-bit registers.
+
+\paragraph{Branching.} tdoku picks the band, horizontal or vertical, with the fewest remaining configurations over all
+digits, and in it a digit with the fewest configurations (two if possible), and branches on keeping or removing one
+configuration. It copies the whole state for the first branch and reuses the original for the second.
+
+\paragraph{Reported results.} On an Intel i5-8600k, with a solution limit of 2 as here, the write-up reports tdoku at
+about 1.5 times the geometric mean speed of the other solvers on magictour and approaching twice on the hardest set,
+with 113 guesses per puzzle on that set against 15 to 367 for the others, and notes that it is slower than fsss2 and
+sk\_bforce2 (by GPenet, 2018) on the easiest puzzles. The write-up also reports an experiment that bears directly on
+this paper: adding strongly-connected-component analysis of the implication graph cut the guesses on magictour to 3.35
+per puzzle, but every variant was slower, and the author chose ``to focus on being fast''.
+
+\paragraph{Counting guesses.} Guess counts are not comparable across solvers without care. tdoku counts one per branch
+point; JCZSolve counts one per two-candidate branch but one per digit tried in its fallback; kudoku counts only
+branches with more than one choice. We count one per two-candidate branch and $n-1$ for an $n$-candidate cell.
+
+\subsection{Recent solvers}
+
+Three open-source solvers since 2021 build on the JCZSolve design. gz\_sudoku~\cite{shines77_gzsudoku} is a C++ rewrite
+of JCZSolve; its documentation reports it slightly faster than rust\_sudoku and concedes that tdoku is fastest on hard
+puzzles.
+
+RKCR7~\cite{rkcr7_2026autoresearch} (March 2026) is a Rust solver in the same family, written by an AI coding agent in
+a loop of automated experiments. It reports beating tdoku on four of six of tdoku's data sets on an AMD processor with
+AVX-512, for example \SI{3.04e-5}{\second} against \SI{5.87e-5}{\second} per puzzle on the hardest set. Its comparison is not like for like: its
+\texttt{solve} function stops at the first solution, while tdoku was timed with tdoku's own benchmark program, which by
+default also checks uniqueness (a limit of 2). The published log confirms this: it shows tdoku making 61.67 guesses per
+puzzle on the 1905 11+ set, exactly tdoku's count at limit 2 on our machine, against 34.17 at limit 1. Its solver
+branches on the first two-candidate cell and falls back to the fewest-candidate cell among the first unsolved cell of
+each band.
+
+fastdoku~\cite{rocketbombs2026fastdoku} (August 2026) is the closest prior work. It is a Rust solver with two
+engines, a band engine in the JCZSolve style and a reimplementation of tdoku's triad engine, and it chooses between
+them per puzzle. It reports 1.06--1.63 times the speed of the faster of tdoku and rust\_sudoku on all eight of tdoku's
+corpora, on several x86 machines. Its benchmark measures time to the \emph{first} solution for every solver,
+consistently but not comparably with our limit-2 results, and its documentation states that its lead is specific to
+x86. On ARM it ports its triad engine to NEON, but compares only against rust\_sudoku, noting that tdoku cannot be
+built there; its ARM measurements come from a shared cloud runner. Its band engine branches on the first
+two-candidate cell. It computes the band rule exactly, from the permutation matrices of each triad pattern, and
+presents this as a strengthening of JCZSolve's table, which it describes as an approximation. We checked JCZSolve's
+table (\texttt{TblComplexMask}) against the perfect-matching definition on all 512 patterns and found them identical,
+so JCZSolve already applies the exact band rule.
+
+We searched GitHub, the Sudoku Players' Forum (whose archive after 2019 is incomplete), arXiv and the
+constraint-programming literature in September 2026. We found no earlier solver that beats tdoku with a solution limit
+of 2, and no native NEON build of tdoku itself. The ideas we combine are not new on their own: the stack rule is
+Simonis's constraint and the peer-count choice is the degree tie-break. We found no fast band solver that uses either.
+
+\subsection{Branching heuristics, lookahead and structure}
+
+Choosing the variable with the fewest remaining values~\cite{haralick1980increasing} is the classic heuristic, and
+most Sudoku solvers use a version of it; the band solvers use the cheaper ``first two-candidate cell''. Breaking ties
+by the number of unassigned neighbours, the \emph{degree} heuristic, goes back to Br\'elaz's graph-colouring algorithm
+(DSATUR)~\cite{brelaz1979new} and is a standard tie-break for minimum remaining values; it has been evaluated on Sudoku in generic
+constraint solvers~\cite{bakker2015generic,liu2026dibs}, though not against the fast solvers discussed here. Our peer-count choice is this
+tie-break applied among the two-candidate cells; what we add is its use in a fast band solver and the measurement of
+its effect there. Lookahead
+SAT solvers~\cite{heule2009lookahead}, and Algorithm L in Knuth's treatment of satisfiability~\cite{knuth2022taocp4b},
+choose a branch by tentatively propagating candidate decisions and scoring the result, and treat a decision whose
+propagation fails as a free deduction. St\aa lmarck's method~\cite{sheeran2000tutorial} goes further and keeps the
+conclusions that both branches of a split share. We test lookahead in \cref{sec:negative}.
+
+Felgenhauer and Jarvis~\cite{felgenhauer2006mathematics} counted all Sudoku grids by enumerating the fillings of the
+top band and extending them, and McGuire, Tugemann and Civario~\cite{mcguire2014sixteen} proved by an exhaustive computer search that no puzzle with 16 clues has a unique solution. Yato and
+Seta~\cite{yato2003complexity} showed that deciding whether a puzzle has another solution besides a given one is
+NP-complete, so no fast solver can avoid search in general. Human solvers use the \emph{pattern overlay} or template
+method, credited to Myth Jellies~\cite{stuart2008pom}, which tests each digit's placement against all 46{,}656
+templates; we test it as a solver in \cref{sec:negative}.
+
+\subsection{How this work builds on prior work}
+
+\Cref{tab:lineage} summarizes where each part of FastBandSolver comes from.
+
+\begin{table}[t]
+\centering
+\caption{Where each part of FastBandSolver comes from.}
+\label{tab:lineage}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{4.6cm}>{\raggedright\arraybackslash}p{6.0cm}}
+\toprule
+part & taken from & what we changed \\
+\midrule
+27-bit mask per (digit, band) & zhouyundong~\cite{zhouyundong2012solver}, JCZSolve~\cite{jczsolve2016} & independent code; same layout \\
+band rule by table lookup & Simonis's row--block matching~\cite{simonis2005sudoku}; JCZSolve's Update & described as bipartite matching; table built from the 6 perfect matchings \\
+column constraint between bands & Simonis's column--block matching~\cite{simonis2005sudoku}; JCZSolve's locked-column table; tdoku's vertical bands & replaced by the stack rule, a perfect-matching test of bands against columns, run only when a band's columns change \\
+row singles & JCZSolve (via tables) & one 4096-entry table justified by \cref{lem:singlerows} \\
+naked singles and two-candidate cells by bit counting & JCZSolve (champagne), fsss2 & unchanged in principle \\
+choice of guess cell & first two-candidate cell (JCZSolve); degree tie-break~\cite{brelaz1979new} & two-candidate cell with the most unsolved peers \\
+fallback when no two-candidate cell & first unsolved cell (JCZSolve); up to three cells (rust\_sudoku); minimum remaining values~\cite{haralick1980increasing} & fewest candidates over all cells, peer count as tie-break \\
+benchmark, data sets, limit 2 & tdoku~\cite{dillon2019nerdsniped} & run on ARM through our NEON port~\cite{kelly2026tdokuarm} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{The band and stack rules}
+\label{sec:rules}
+
+\paragraph{The idea in plain terms.} Look at one digit, say 5, in one band. The finished grid will have exactly one 5
+in each of the band's three rows and exactly one in each of its three boxes. So the three 5s pair the rows with the
+boxes: each row gets its own box. Some pairings may already be impossible because 5 has been ruled out of that part of
+the row. If a particular row--box combination cannot be part of \emph{any} complete pairing, then 5 cannot go in that
+triad, even though nothing in the triad itself rules it out. This one idea, checked with a lookup table,
+covers locked candidates between rows and boxes, and it narrows a box that has a single place left for the digit down
+to a row with a single place left, which the solver then fills. The \emph{band rule} is this check. In the terms of
+\cref{sec:terms}, the band's rows and boxes are the two sides of a bipartite graph, row $r$ is joined to box $k$ when
+the digit can still go in their triad, the digit's three placements form a perfect matching, and every edge that lies
+on no perfect matching is deleted. \Cref{fig:band} works through an example. The rule removes whole triads; it never
+chooses between the cells of one.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[x=0.5cm,y=0.5cm,
+  cand/.style={font=\small\bfseries},
+  gone/.style={font=\small\bfseries,red!80!black},
+  vtx/.style={circle,draw,fill=white,inner sep=1.6pt}]
+  % ---------- (a) before ----------
+  \begin{scope}
+    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(a)} candidates for 5 in one band};
+    \foreach \r/\k in {0/0,0/1,1/0,1/1,2/0,2/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\c in {0/1,0/4,1/0,1/5,2/2,2/3,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+  \end{scope}
+  % ---------- (b) graph ----------
+  \begin{scope}[xshift=8.6cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(b)} rows vs.\ boxes};
+    \foreach \r in {0,1,2} \node[vtx,label={[font=\scriptsize]left:row \r}] (r\r) at (0,3.5-1.5*\r) {};
+    \foreach \k in {0,1,2} \node[vtx,label={[font=\scriptsize]right:box \k}] (b\k) at (4,3.5-1.5*\k) {};
+    \draw[very thick] (r0) -- (b0);
+    \draw[very thick] (r0) -- (b1);
+    \draw[very thick] (r1) -- (b0);
+    \draw[very thick] (r1) -- (b1);
+    \draw[very thick] (r2) -- (b2);
+    \draw[dashed,thick,red] (r2) -- (b0);
+    \draw[dashed,thick,red] (r2) -- (b1);
+  \end{scope}
+  % ---------- (c) matrices ----------
+  \begin{scope}[yshift=-3.3cm]
+    \node[anchor=west] at (-2.2,5.6) {\small\textbf{(c)} the same graph as a table};
+    \node[font=\footnotesize,align=center] at (5.0,4.1) {$A$: 1 = a 5 is still possible\\ in that row's triad in that box};
+    \node[font=\footnotesize] at (5.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & 1 & 1 & 0 \\
+      \text{row }1 & 1 & 1 & 0 \\
+      \text{row }2 & 1 & 1 & 1
+      \end{array}$};
+    \draw[->,thick] (10.2,1.5) -- (14.8,1.5) node[midway,above,font=\footnotesize,align=center] {keep the 1s on a\\perfect matching};
+    \node[font=\footnotesize,align=center] at (20.0,4.1) {$\mathrm{supp}(A)$: the union of the two pairings\\ that fit (bold); \textcolor{red}{red} 1s are removed};
+    \node[font=\footnotesize] at (20.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & \mathbf{1} & \mathbf{1} & 0 \\
+      \text{row }1 & \mathbf{1} & \mathbf{1} & 0 \\
+      \text{row }2 & \textcolor{red}{\cancel{1}} & \textcolor{red}{\cancel{1}} & \mathbf{1}
+      \end{array}$};
+  \end{scope}
+  % ---------- (d) after ----------
+  \begin{scope}[xshift=3.5cm,yshift=-7.0cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(d)} after the band rule};
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\k in {0/0,0/1,1/0,1/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \r/\c in {0/1,0/4,1/0,1/5,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+    \foreach \r/\c in {2/2,2/3} {
+      \node[gone] at (\c+0.5,2.5-\r) {5};
+      \draw[red,thick] (\c+0.15,2.15-\r) -- (\c+0.85,2.85-\r);
+    }
+  \end{scope}
+\end{tikzpicture}
+\caption{The band rule for the digit 5, on the example used throughout the paper. (a) The band's three rows and three
+boxes; 5 is still a candidate in the cells shown, and the shaded triads are those that contain a candidate. (b) The
+bipartite graph: an edge joins row $r$ and box $k$ when triad $(r,k)$ is shaded. Rows 0 and 1 are joined only to
+boxes 0 and 1, so they use up both, and row 2 must take box 2. Two perfect matchings remain (row 0 with box 0 and row 1
+with box 1, or the other way round), and the black edges are their union. The two red dashed edges are in no perfect
+matching. (c) The same graph as a table $A$: one row of the table per row of the band, one column per box, and a 1 where the
+graph has an edge, that is, where 5 is still possible in that triad. Keeping only the 1s that lie on a perfect
+matching gives $\mathrm{supp}(A)$: the bold 1s are the union of the two pairings that fit, and the red 1s, the dashed
+edges of (b), are removed. (d) Removing the red edges removes 5 from triads (row 2, box 0) and (row 2, box 1): the
+candidates in columns 2 and 3 of row 2 are eliminated, although nothing in their own row, column or box rules them
+out directly. The stack rule is the same test with bands in place of rows and a stack's
+columns in place of boxes.}
+\label{fig:band}
+\end{figure}
+
+\paragraph{The stack rule.} The \emph{stack rule} is the same check turned sideways. In a stack, the digit appears once
+in each of the stack's three columns and once in each of its three boxes, and the three boxes of a stack lie in three
+different bands, so the digit's three placements pair the bands one-to-one with the stack's columns. The graph has the
+three bands on one side and the stack's three columns on the other, with an edge from band $b$ to column $c$ when the
+digit can still go in column $c$ within band $b$, and every edge that lies on no perfect matching is deleted: the digit
+is removed from that column within that band. For example, if in one stack 5 can go in columns 0 and 1 in band 0, only
+in column 0 in band 1, and in any of the three columns in band 2, then band 1 must take column 0, band 0 column 1 and
+band 2 column 2, and three of the six edges are deleted. The locked-column step of JCZSolve is the special case of a
+band joined to a single column, and tdoku gets the same inference from its vertical triads. Both rules are the matching
+constraints of Simonis~\cite{simonis2005sudoku}, Section 5.3, restricted to $3\times 3$ graphs, which is what lets one
+table lookup apply them.
+
+\paragraph{Hidden singles.} The solver detects hidden singles only in rows. \Cref{prop:hidden} in \cref{sec:proofs} shows that this loses
+nothing in any state that has a solution: once propagation stops, a digit with a single place left in a box or a column also has a single place left
+in that cell's row, so the row rule has already placed it.
+
+Empirically, in a reference solver that applies every rule to every (digit, band) in each round, removing box and
+column hidden singles from a solver with both rules and row singles leaves the search tree unchanged on the 1106
+forum-hardest, 17-clue, magictour and kaggle sets (284.2 vs.\ 284.2 nodes per puzzle on 1106), but propagation takes
+up to 6\% more rounds per node, because those singles are then found a round later (8.11 vs.\ 7.62 on 17-clue).
+Dropping row singles too doubles the tree (621 nodes on 1106).
+
+\subsection{Definitions}
+
+\begin{definition}[candidates and solutions]
+A \emph{candidate set} $C$ is a set of (cell, digit) pairs. A \emph{solution} is a map $\sigma$ from the 81 cells to the
+digits that puts each digit exactly once in every row, column and box. A solution $\sigma$ is \emph{consistent with}
+$C$ when $(x,\sigma(x))\in C$ for every cell $x$; $\mathrm{Sol}(C)$ is the set of such solutions. Removing a set $R$ of
+pairs from $C$ is \emph{sound} when no $\sigma\in\mathrm{Sol}(C)$ uses a pair of $R$, that is, when
+$\mathrm{Sol}(C\setminus R)=\mathrm{Sol}(C)$.
+\end{definition}
+
+Every rule of the solver only removes candidates, so $\mathrm{Sol}(C\setminus R)\subseteq\mathrm{Sol}(C)$ always holds, and
+soundness is the reverse inclusion.
+
+\begin{definition}[support of a $3\times 3$ matrix]
+Let $A$ be a $3\times 3$ 0-1 matrix. A \emph{perfect matching} of $A$ is a permutation $\pi$ of $\{0,1,2\}$ with
+$A_{i\pi(i)}=1$ for $i=0,1,2$. The \emph{support} $\mathrm{supp}(A)$ is the 0-1 matrix whose 1-entries are the entries
+$(i,\pi(i))$ over all perfect matchings $\pi$ of $A$. The table \textsc{PermutationUnion} stores $\mathrm{supp}(A)$ for all
+512 matrices, computed from this definition by testing the 6 permutations.
+\end{definition}
+
+For digit $d$ and band $b$ let $A^{d,b}$ be the $3\times 3$ matrix with $A^{d,b}_{rk}=1$ when $d$ has a candidate in
+the triad of row $r$ and box $k$ of band $b$ (\cref{fig:band}). For digit $d$ and stack $s$, let $B^{d,s}$ be the
+$3\times 3$ matrix with $B^{d,s}_{bj}=1$ when $d$ has a candidate in column $3s+j$ within band $b$.
+
+\begin{lemma}[idempotence]
+\label{lem:idempotent}
+$A$ and $\mathrm{supp}(A)$ have the same perfect matchings. Hence $\mathrm{supp}(\mathrm{supp}(A))=\mathrm{supp}(A)$, and
+$\mathrm{supp}(A)\neq 0$ exactly when $A$ has a perfect matching, in which case $\mathrm{supp}(A)$ has a 1 in every row
+and every column.
+\end{lemma}
+\begin{proof}
+Every perfect matching of $A$ uses only entries of $\mathrm{supp}(A)$, by definition, so it is a perfect matching of
+$\mathrm{supp}(A)$. Conversely $\mathrm{supp}(A)\le A$ entrywise, so a perfect matching of $\mathrm{supp}(A)$ is one of $A$.
+Equal sets of perfect matchings give equal supports. A perfect matching has one entry in each row and each column.
+\end{proof}
+
+\subsection{Only 50 supports}
+\label{sec:fifty}
+
+\textsc{PermutationUnion} has 512 entries, but only 50 different values appear in it. This subsection explains why,
+and what it means for the tables built on it.
+
+Number the 6 permutations of $\{0,1,2\}$ and identify each with its \emph{pattern}, the three entries $(i,\pi(i))$, as a
+$3\times 3$ 0-1 matrix. Two facts about patterns do most of the work.
+\begin{itemize}
+\item \emph{Every entry lies on exactly two permutations:} once row $i$ is paired with column $j$, the other two rows
+  can be paired with the other two columns in two ways.
+\item \emph{Two permutations of the same parity share no entry, and two of opposite parity share exactly one.} The
+  three even permutations (the identity and the two 3-cycles) tile the $3\times 3$ grid, and so do the three odd ones
+  (the three swaps). The two permutations through an entry therefore have opposite parity, so for a permutation $\pi$
+  the other permutations through its three entries are exactly the three permutations of the other parity.
+\end{itemize}
+
+\begin{proposition}
+\label{prop:fifty}
+The values of $\mathrm{supp}$ over all 512 matrices are exactly the unions of sets of permutation patterns, and there
+are 50 of them. A union that is not all nine entries comes from exactly one set of permutations, namely the
+permutations whose patterns lie inside it; the all-ones matrix comes from 15 sets.
+\end{proposition}
+\begin{proof}
+By definition $\mathrm{supp}(A)$ is the union of the patterns that fit in $A$. Conversely, if $U$ is the union of a
+set $S$ of patterns, every pattern of $S$ fits in $U$, so $\mathrm{supp}(U)\supseteq U$, and $\mathrm{supp}(U)\le U$
+always; hence $\mathrm{supp}(U)=U$. So the values are exactly the unions.
+
+Suppose the union $U$ of $S$ contains the pattern of some $\pi\notin S$. Each of $\pi$'s three entries is then covered by
+the other permutation through it, so $S$ contains all three permutations of the parity opposite to $\pi$'s, and these
+already cover all nine entries. So a union that is not all ones contains no pattern outside its set, and different
+sets give different unions.
+
+It remains to count the sets whose union is all ones. An entry is missed only when both permutations through it are
+left out. A set of at most two patterns covers at most six entries. Three patterns cover nine exactly when they are
+pairwise disjoint, that is, of one parity: 2 sets. A set of four leaves out two permutations, and misses an entry
+exactly when those two share one, that is, have opposite parity; leaving out a same-parity pair ($3+3$ choices) covers
+everything: 6 sets. Every set of five or six covers everything, since every entry lies on two permutations: 6 sets and
+1 set. That is $2+6+6+1=15$ of the $2^6=64$ sets, so there are $64-15+1=50$ unions.
+\end{proof}
+
+\Cref{tab:fifty} sorts the 50 supports by the number of permutations in them and counts how many of the 512 matrices
+have each one.
+
+\begin{table}[h]
+\centering
+\caption{The 50 values of \textsc{PermutationUnion}, by the number of perfect matchings they contain.}
+\label{tab:fifty}
+\small
+\begin{tabular}{rrrrr}
+\toprule
+perfect matchings & entries & supports & matrices with each support & matrices in all \\
+\midrule
+0 & 0 & 1 & 265 & 265 \\
+1 & 3 & 6 & 25 & 150 \\
+2, opposite parity & 5 & 9 & 7 & 63 \\
+2, same parity & 6 & 6 & 1 & 6 \\
+3, not one parity & 7 & 18 & 1 & 18 \\
+4 & 8 & 9 & 1 & 9 \\
+6 & 9 & 1 & 1 & 1 \\
+\midrule
+ & & 50 & & 512 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Three things stand out. More than half of all $3\times 3$ tables, 265 of 512, have no perfect matching; for
+the band rule these are the contradictions. A table with a single perfect matching, where the rule forces the whole
+pairing, is the support of 25 tables each. And 34 of the 50 supports are the support of no table but themselves: the band rule never shrinks a
+table down to one of them, it can only find one already in place.
+
+\paragraph{What it means for the tables.} The index of \textsc{SingleRows} is $\mathit{kept}\mid
+\mathit{boxes}\ll 9$, where $\mathit{kept}=\textsc{PermutationUnion}[\mathit{boxCandidates}]$ and $\mathit{boxes}$ is
+\textsc{OneColumnBoxes}$[\mathit{columns}]$, 3 bits. Since $\mathit{kept}$ is a support and is never 0 there (that case
+returns as a contradiction first), only $49\times 8=392$ of the 4{,}096 entries can ever be read. We counted the reads
+over every lookup with limit 2: on six of the seven data sets all 392 are read, and on serg\_benchmark 178. The 392
+entries are spread over 56 of the table's 64 cache lines of 64 bytes, so in practice almost all of its 4\,KB is kept
+in cache anyway, well within a 48 to 128\,KB level-1 data cache. Packing the table to 392 entries would need a second
+table to turn $\mathit{kept}$ into a number from 0 to 48, a load that the main lookup would have to wait for on the
+hottest path of the solver, to save about 3.6\,KB, so we keep the full table. The tables indexed by raw candidates do
+not shrink this way: $\mathit{boxCandidates}$, the index of \textsc{PermutationUnion} and \textsc{PossibleCells} in the
+band rule, takes all 512 values on two of the data sets, and at least 488 on every set except kaggle (247) and serg\_benchmark (325).
+
+\subsection{Soundness of the rules}
+
+\begin{lemma}[band rule]
+\label{lem:band}
+Let $\sigma\in\mathrm{Sol}(C)$, $d$ a digit and $b$ a band. For each row $r$ of the band let $\kappa(r)$ be the box of
+the cell of row $r$ where $\sigma$ puts $d$. Then $\kappa$ is a perfect matching of $A^{d,b}$. Consequently: removing $d$
+from every cell of every triad $(r,k)$ with $\mathrm{supp}(A^{d,b})_{rk}=0$ is sound, and if $A^{d,b}$ has no perfect
+matching then $\mathrm{Sol}(C)=\emptyset$.
+\end{lemma}
+\begin{proof}
+By the row constraint, $\sigma$ puts $d$ in exactly one cell $x_r$ of each row $r$ of the band, so $\kappa$ is well
+defined. Every cell of the band lies in one of its rows, so $x_0,x_1,x_2$ are all the cells of the band holding $d$. By
+the box constraint each of the band's three boxes holds exactly one of them, so $\kappa$ is a bijection. Since $\sigma$
+is consistent with $C$, $(x_r,d)\in C$, so $A^{d,b}_{r\kappa(r)}=1$: $\kappa$ is a perfect matching, and
+$(r,\kappa(r))$ is in the support. If $\sigma$ put $d$ at a cell $x$ of triad $(r,k)$, then $x=x_r$ and $k=\kappa(r)$,
+so $(r,k)$ is in the support; the removed pairs are therefore unused. If $A^{d,b}$ has no perfect matching, no
+$\sigma$ can exist.
+\end{proof}
+
+\begin{lemma}[stack rule]
+\label{lem:stack}
+Let $\sigma\in\mathrm{Sol}(C)$, $d$ a digit and $s$ a stack. For each band $b$ let $\tau(b)$ be the $j\in\{0,1,2\}$ such that
+$\sigma$ puts $d$ in column $3s+j$ within band $b$. Then $\tau$ is well defined and a perfect matching of $B^{d,s}$.
+Consequently removing $d$ from column $3s+j$ within band $b$ whenever $\mathrm{supp}(B^{d,s})_{bj}=0$ is sound, and if
+$B^{d,s}$ has no perfect matching then $\mathrm{Sol}(C)=\emptyset$.
+\end{lemma}
+\begin{proof}
+This is the argument of \cref{lem:band} with the stack's bands in place of a band's rows and the stack's columns in
+place of a band's boxes; only the counting step differs. The cells of band $b$ in stack $s$ form one box, so by the
+box constraint $\sigma$ puts $d$ in exactly one of them, $y_b$, and $\tau(b)$ is well defined. The cells $y_0,y_1,y_2$
+are then all the cells of the stack holding $d$, and by the column constraint each of the stack's three columns holds
+exactly one of them, so $\tau$ is a bijection. Consistency gives $(y_b,d)\in C$, so $B^{d,s}_{b\tau(b)}=1$ and $\tau$ is
+a perfect matching. The two consequences follow as in \cref{lem:band}.
+\end{proof}
+
+\section{FastBandSolver}
+\label{sec:solver}
+
+This section describes the implementation in enough detail to rebuild it; the code is a single C++20 header,
+\texttt{fastbandsolver.hpp}, of about 400 lines. It solves one puzzle at a time on one thread.
+
+\paragraph{Overview.} The solver keeps, for every digit and every band, a 27-bit mask of the cells where the digit can
+still go (\cref{sec:state}). Solving a node of the search tree repeats three steps until nothing changes. (1) For each
+mask that changed, apply the band rule, the stack rule and row singles (\cref{alg:band,alg:stack}); these are the
+cheap, frequent steps, done with a few table lookups each. (2) Count, for each cell, how many digits it still admits,
+using bitwise tricks that handle all 27 cells of a band at once; a cell with none means a dead end, a cell with one is
+a naked single to place. (3) When nothing changes and cells remain open, guess: pick the two-candidate cell with the
+most open cells around it, and try both digits (\cref{alg:search}). Everything else in this section is about doing
+these steps with as few instructions and as few unpredictable branches as possible.
+
+\subsection{State and bit layout}
+\label{sec:state}
+
+Following zhouyundong~\cite{zhouyundong2012solver}, candidates are stored by digit and band. For digit
+$d\in\{1,\dots,9\}$ and band $b\in\{0,1,2\}$, the 32-bit word $M_{d,b}$ holds a 27-bit mask of the cells of band $b$
+where $d$ can still go, with bit $9r+c$ for row $r\in\{0,1,2\}$ of the band and column $c\in\{0,\dots,8\}$:
+
+\begin{center}
+\small
+\begin{tabular}{ccc}
+bits 26\ldots18 & bits 17\ldots9 & bits 8\ldots0 \\
+\midrule
+row 2 (cols 8\ldots0) & row 1 (cols 8\ldots0) & row 0 (cols 8\ldots0) \\
+\end{tabular}
+\end{center}
+
+\noindent Within each 9-bit row, bits $3k$, $3k{+}1$, $3k{+}2$ are the \emph{triad} of box $k$. We write a band mask as nine groups of three bits, one per triad,
+read from row 2, box 2 on the left to row 0, box 0 on the right. For example $111\,111\,111_2 = 511$ is nine 1-bits,
+the mask of one row. Two shifts, two ORs
+and an AND give the band's \emph{column set} $P(M)=(M \mid M\gg 9 \mid M\gg 18)\ \&\ 111\,111\,111_2$, the columns where the digit still has a
+candidate in the band (\texttt{bandColumns} in the code), and $\mathrm{cols}(x)=x \mid x\ll 9 \mid x\ll 18$ spreads a 9-bit column
+set back to cells (two shifts and two ORs; \texttt{columnCells} in the code).
+
+\paragraph{Why one word per band, not one per row.} Most of the solver's work is on a whole band at once (the band
+rule, the change test, the stack rule's AND, placements and the candidate counters), and each of these is one
+instruction on a 27-bit word but would be three on separate 9-bit rows.
+
+The search state is a plain struct:
+
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+field & type & meaning \\
+\midrule
+\texttt{valueToBand[9][3]} & 32-bit & $M_{d,b}$ at \texttt{valueToBand[$d-1$][$b$]}: digit first, then band \\
+\texttt{checked[9][3]} & 32-bit & $M_{d,b}$ as it was the last time the band rules ran on it (0 initially) \\
+\texttt{unsolved[3]} & 32-bit & cells of each band not yet given a digit \\
+\texttt{openRows[9]} & 16-bit & per digit, 9 bits: rows ($3b+r$) where the digit is not yet placed \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent That is 246 bytes. A placed digit keeps its cell in $M_{d,b}$, so a solved grid is one in which every cell
+has exactly one candidate. The solver owns an array of 82 states; the state for search depth $t$ is slot $t$, and a
+guess copies slot $t$ into slot $t{+}1$ with one \texttt{memcpy} (a block copy of
+memory). No memory is allocated during a solve.
+
+\subsection{Lookup tables}
+
+All tables are computed at compile time (\texttt{constexpr}) and total 8{,}548 bytes.
+
+\begin{center}
+\small
+\begin{tabular}{ll>{\raggedright\arraybackslash}p{8.2cm}}
+\toprule
+table & entries & contents \\
+\midrule
+\texttt{BOXES\_OF\_ROW} & 512 $\times$ 8 bit & for a 9-bit row, the boxes (3 bits) it has candidates in \\
+\texttt{PERMUTATION\_UNION} & 512 $\times$ 16 bit & for a $3\times 3$ 0-1 table of candidates (bit $3i+j$), the OR of the
+  permutations that fit inside it: each of the 6 permutations (3 bits, one per row and per column) whose three entries
+  are all 1 is ORed in, so the result is the table's entries that lie on some perfect matching; 0 if none fits \\
+\texttt{POSSIBLE\_CELLS} & 512 $\times$ 32 bit & for box candidates (bit $3r+k$): first
+  $\mathit{kept}=\texttt{PERMUTATION\_UNION}[\mathit{boxCandidates}]$, then each 1 of $\mathit{kept}$ widened to its triad's
+  3 cells, $111_2 \ll (9r+3k)$. The index only selects the entry; the cells come from $\mathit{kept}$ \\
+\texttt{ONE\_COLUMN\_BOXES} & 512 $\times$ 8 bit & for a band's column set, the boxes (3 bits) with exactly one column \\
+\texttt{SINGLE\_ROWS} & 4096 $\times$ 8 bit & for \texttt{PERMUTATION\_UNION}$[\mathit{boxCandidates}]$ and
+  \texttt{ONE\_COLUMN\_BOXES}$[\mathit{columns}]\ll 9$, the rows
+  (3 bits) down to one cell (\cref{lem:singlerows}); only 392 entries can be reached (\cref{sec:fifty}) \\
+\texttt{AFTER\_PLACING} & 27 $\times$ 32 bit & for a cell, the band minus the cell's row and box, plus the cell \\
+\texttt{OTHER\_BANDS\ldots} & 27 $\times$ 32 bit & for a cell, all cells of a band except the cell's column \\
+\texttt{BAND\_PEERS} & 27 $\times$ 32 bit & for a cell, its row and box within the band, the cell excluded \\
+\texttt{ROWS\_CELLS} & 8 $\times$ 32 bit & for a 3-bit row set, the cells of those rows \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The band update}
+
+\Cref{alg:band} is the inner step, run on one (digit, band) mask. It is written as a C++ template on the band index, so the compiler generates a separate copy for each band in which
+the positions of the two other bands are constants. It is also forced \emph{inline}: its code is copied into the update
+loop instead of being called as a function, which avoids the cost of a call.
+
+\begin{algorithm}[H]
+\caption{\textsc{UpdateBand}$_b(S, d)$: band rule, stack rule and row singles for digit $d$ in band $b$}
+\label{alg:band}
+\begin{algorithmic}[1]
+\State $\mathit{bandCells} \gets S.\mathit{valueToBand}[d-1][b]$; \ $\mathit{lastChecked} \gets S.\mathit{checked}[d-1][b]$
+\State $\mathit{boxCandidates} \gets \textsc{BoxesOfRow}[\mathit{bandCells} \,\&\, 111\,111\,111_2]$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{BoxesOfRow}[(\mathit{bandCells}\gg 9)\,\&\,111\,111\,111_2]\ll 3$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{BoxesOfRow}[\mathit{bandCells}\gg 18]\ll 6$ \Comment{the $3\times 3$ matrix $A^{d,b}$}
+\State $\mathit{bandCells} \gets \mathit{bandCells} \,\&\, \textsc{PossibleCells}[\mathit{boxCandidates}]$ \Comment{band rule}
+\If{$\mathit{bandCells} = 0$} \Return \textbf{contradiction} \EndIf
+\State $S.\mathit{valueToBand}[d-1][b] \gets \mathit{bandCells}$; \ $S.\mathit{checked}[d-1][b] \gets \mathit{bandCells}$
+\State $\mathit{columns} \gets \mathrm{bandColumns}(\mathit{bandCells})$
+\If{$\mathit{columns} \ne \mathrm{bandColumns}(\mathit{lastChecked})$} \textsc{StackRule}$(S, d)$ \EndIf
+\State $\mathit{singleRows} \gets \textsc{SingleRows}[\textsc{PermutationUnion}[\mathit{boxCandidates}]$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{OneColumnBoxes}[\mathit{columns}]\ll 9]$
+\State $\mathit{openRowsInBand} \gets (S.\mathit{openRows}[d-1] \gg 3b) \,\&\, 111_2$ \Comment{rows where $d$ is not placed yet}
+  \Statex \hspace{\algorithmicindent}$\mathit{newSingleRows} \gets \mathit{singleRows} \,\&\, \mathit{openRowsInBand}$
+\If{$\mathit{newSingleRows} \ne 0$}
+  \State $\mathit{placedCells} \gets \mathit{bandCells} \,\&\, \textsc{RowsCells}[\mathit{newSingleRows}]$ \Comment{one cell per new single row}
+  \State $\mathit{digitMaskNow} \gets S.\mathit{valueToBand}[d-1][b]$ \Comment{as left by the stack rule}
+  \For{$\mathit{other} \gets 0$ \textbf{to} $8$} $S.\mathit{valueToBand}[\mathit{other}][b] \gets S.\mathit{valueToBand}[\mathit{other}][b] \,\&\, \lnot\mathit{placedCells}$ \EndFor
+  \State $S.\mathit{valueToBand}[d-1][b] \gets \mathit{digitMaskNow}$ \Comment{give $d$ its mask back}
+  \State $S.\mathit{unsolved}[b] \gets S.\mathit{unsolved}[b] \,\&\, \lnot\mathit{placedCells}$
+  \Statex \hspace{\algorithmicindent}$S.\mathit{openRows}[d-1] \gets S.\mathit{openRows}[d-1] \,\&\, \lnot(\mathit{newSingleRows}\ll 3b)$
+\EndIf
+\State \Return \textbf{ok}
+\end{algorithmic}
+\end{algorithm}
+\input{figs/alg_band}
+
+
+The names follow the code. Line 2 turns the 27-bit mask $\mathit{bandCells}$ into $\mathit{boxCandidates}$, the
+$3\times 3$ matrix $A^{d,b}$ of \cref{sec:rules} (bit $3r+k$ for row $r$, box $k$), with three 512-entry lookups, one per
+row. Line 3 applies the band rule: \textsc{PossibleCells}$[\mathit{boxCandidates}]$ is the set of cells of triads on
+some perfect matching, so one AND removes every candidate of $d$ that no row-to-box arrangement can use. If no perfect matching
+exists the table entry is 0 and the band is a contradiction (line 4). Lines 6--7 run the stack rule only when the
+band's column set changed; because \texttt{checked} starts at 0, every band triggers it once on its first update. The
+stack rule may shrink this band again; since \texttt{checked} keeps the value from line 5, the band then differs from
+its checked value and is updated again in the next pass.
+
+Line 8 finds the rows that are down to one cell without examining the rows bit by bit. \textsc{SingleRows} is
+built from its definition: for an index made of a 9-bit $\mathit{kept}$ and a 3-bit $\mathit{boxes}$, it sets the bit
+of row $r$ when row $r$ of $\mathit{kept}$ has exactly one 1, in some box $k$, and bit $k$ of $\mathit{boxes}$ is set.
+The lemma says that this gives the right rows.
+
+\begin{lemma}
+\label{lem:singlerows}
+In a call of \textsc{UpdateBand} that gets past line 4, the set $\mathit{singleRows}$ computed at line 8 is exactly the
+set of rows of the band that contain exactly one cell of $\mathit{bandCells}$, the mask left by line 3.
+\end{lemma}
+\begin{proof}
+Let $A$ be the matrix $\mathit{boxCandidates}$ of line 2, built from the mask before line 3. Line 8 reads
+\textsc{SingleRows} with $\mathit{kept}=\textsc{PermutationUnion}[A]=\mathrm{supp}(A)$ and
+$\mathit{boxes}=\textsc{OneColumnBoxes}[P(\mathit{bandCells})]$, the boxes with exactly one column in
+$P(\mathit{bandCells})$ (line 6).
+
+Line 3 keeps the cells of the triads in $\mathrm{supp}(A)$ and removes the others. Each triad in $\mathrm{supp}(A)$ has
+a 1 in $A$, so it contains a cell, which line 3 keeps. So the cells of row $r$ in $\mathit{bandCells}$ lie in the boxes
+$k$ with $\mathrm{supp}(A)_{rk}=1$, and each of these boxes holds at least one of them. As $\mathit{bandCells}\neq 0$
+(line 4), $\mathrm{supp}(A)\neq 0$, so by \cref{lem:idempotent} every row of $\mathrm{supp}(A)$ has at least one 1.
+
+If row $r$ of $\mathrm{supp}(A)$ has two or more 1s, row $r$ has at least two cells in $\mathit{bandCells}$, and
+\textsc{SingleRows} does not set its bit. If it has exactly one, in box $k$, then every perfect matching of $A$ pairs
+row $r$ with box $k$, since its entry in row $r$ is a 1 of $\mathrm{supp}(A)$. So no perfect matching uses $(r',k)$
+for a row $r'\neq r$, these entries are 0 in $\mathrm{supp}(A)$, and the only cells of $\mathit{bandCells}$ in box $k$
+are those of row $r$. The columns of box $k$ in $P(\mathit{bandCells})$ are therefore the columns of row $r$'s cells
+there, one column per cell. Hence row $r$ has exactly one cell exactly when box $k$ has exactly one column in
+$P(\mathit{bandCells})$, that is, when bit $k$ of $\mathit{boxes}$ is set, which is when \textsc{SingleRows} sets the
+bit of row $r$.
+\end{proof}
+
+\noindent So \textsc{SingleRows} is indexed by the 9-bit permutation union $\mathrm{supp}(A)$ and the 3-bit set of one-column boxes, 4096
+entries. Line 9 keeps only rows where $d$ is not yet placed, so each placement is made once. Placing row singles (lines 10--15) clears the placed cells from all nine digits of the band in straight-line code and
+then restores $d$'s own mask, which is cheaper than testing \texttt{other != digit} in the loop. It restores the mask
+as it was just before the clearing, after the stack rule, not the band-rule output $\mathit{bandCells}$: the stack rule
+may have removed more of this band, and restoring $\mathit{bandCells}$ would put those candidates back (\cref{sec:pitfalls}).
+
+\subsection{The stack rule}
+
+\begin{algorithm}[H]
+\caption{\textsc{StackRule}$(S, d)$}
+\label{alg:stack}
+\begin{algorithmic}[1]
+\State $\mathit{columns}_b \gets \mathrm{bandColumns}(S.\mathit{valueToBand}[d-1][b])$ for $b = 0,1,2$ \Comment{9-bit column sets}
+\State $\mathit{keptColumns}_0, \mathit{keptColumns}_1, \mathit{keptColumns}_2 \gets 0$
+\For{$\mathit{shift} \gets 0, 3, 6$} \Comment{one pass per stack; $\mathit{shift}$ is its first column}
+  \State $\mathit{columnCandidates} \gets (\mathit{columns}_0\gg \mathit{shift} \,\&\, 111_2) \mid (\mathit{columns}_1\gg \mathit{shift} \,\&\, 111_2)\ll 3$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid (\mathit{columns}_2\gg \mathit{shift} \,\&\, 111_2)\ll 6$ \Comment{the matrix $B^{d,s}$: bands $\times$ columns}
+  \State $\mathit{kept} \gets \textsc{PermutationUnion}[\mathit{columnCandidates}]$
+  \State $\mathit{keptColumns}_b \gets \mathit{keptColumns}_b \mid ((\mathit{kept} \gg 3b)\,\&\,111_2)\ll \mathit{shift}$ for $b = 0,1,2$
+\EndFor
+\State $S.\mathit{valueToBand}[d-1][b] \gets S.\mathit{valueToBand}[d-1][b] \,\&\, \mathrm{columnCells}(\mathit{keptColumns}_b)$ for $b = 0,1,2$
+\end{algorithmic}
+\end{algorithm}
+
+
+\Cref{alg:stack} builds, for each stack, the $3\times 3$ matrix of bands by the stack's three columns and keeps the
+pairs on some perfect matching, reusing \textsc{PermutationUnion}. It is branch-free: three lookups and a few dozen shifts,
+ANDs and ORs. The locked-column step of JCZSolve is the case where a band has one column
+in a stack; we removed it, as the stack rule covers it and runs only when column sets change. Processing only the
+stacks whose columns changed produced the same tree but was 19\% slower, because the per-stack branches mispredict.
+
+\subsection{The update loop and propagation}
+
+\begin{algorithm}[H]
+\caption{\textsc{Update}$(S)$ and \textsc{Propagate}$(S)$}
+\label{alg:propagate}
+\begin{algorithmic}[1]
+\Function{Update}{$S$}
+  \Repeat
+    \State $\mathit{ranAnyCheck} \gets \mathbf{false}$
+    \For{$d \gets 1$ \textbf{to} $9$}
+      \For{$b \gets 0$ \textbf{to} $2$} \Comment{unrolled}
+        \If{$S.\mathit{valueToBand}[d-1][b] \ne S.\mathit{checked}[d-1][b]$}
+          \If{\textsc{UpdateBand}$_b(S,d)$ fails} \Return \textbf{contradiction} \EndIf
+          \State $\mathit{ranAnyCheck} \gets \mathbf{true}$
+        \EndIf
+      \EndFor
+    \EndFor
+  \Until{\textbf{not} $\mathit{ranAnyCheck}$} \Comment{a pass ran no \textsc{UpdateBand}}
+\EndFunction
+\Function{Propagate}{$S$}
+  \Loop
+    \If{\textsc{Update}$(S)$ fails} \Return \textbf{contradiction} \EndIf
+    \State $\mathit{placed} \gets \mathbf{false}$; \ $\mathit{multiple} \gets 0$
+    \For{$b \gets 0$ \textbf{to} $2$}
+      \State $\mathit{once}, \mathit{twice}, \mathit{thrice} \gets 0$
+      \For{$d \gets 1$ \textbf{to} $9$} \Comment{bit-sliced counters, saturating at 3}
+        \State $\mathit{thrice} \gets \mathit{thrice} \mid (\mathit{twice} \,\&\, M_{d,b})$; \ $\mathit{twice} \gets \mathit{twice} \mid (\mathit{once} \,\&\, M_{d,b})$
+          \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}\hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mathit{once} \gets \mathit{once} \mid M_{d,b}$
+      \EndFor
+      \If{$\mathit{once} \ne 2^{27}-1$} \Return \textbf{contradiction} \Comment{a cell with no candidate} \EndIf
+      \State $\mathit{pairs}_b \gets \mathit{twice} \,\&\, \lnot \mathit{thrice}$; \ $\mathit{multiple} \gets \mathit{multiple} \mid \mathit{twice}$
+      \For{each cell $x$ in $\mathit{once} \,\&\, \lnot \mathit{twice} \,\&\, S.\mathit{unsolved}[b]$} \Comment{naked singles}
+        \State $d \gets$ the digit with $x \in M_{d,b}$; \textbf{if} none \Return \textbf{contradiction}
+        \State \textsc{ClearPeers}$(S, d, b, x)$; \ $\mathit{placed} \gets \mathbf{true}$
+      \EndFor
+    \EndFor
+    \If{\textbf{not} $\mathit{placed}$}
+      \State \Return ($\mathit{multiple} \ne 0$ ? \textbf{open} : \textbf{solved})
+    \EndIf
+  \EndLoop
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+
+\textsc{Update} (\cref{alg:propagate}) scans the 27 masks in digit order and runs \textsc{UpdateBand} on each one that
+changed, until a pass changes nothing. Changes made during a pass (by the stack rule, or by row singles clearing cells
+of other digits) are picked up later in the same pass or in the next one; the order does not affect the fixed point,
+because every rule only removes candidates, and removing a candidate never makes a later removal wrong
+(the rules are \emph{monotone}), so any order of applying them reaches the same end state.
+
+\textsc{Propagate} then counts, for each band, how many digits each cell still admits. The three words
+$\mathit{once}$, $\mathit{twice}$ and $\mathit{thrice}$ are bit-sliced saturating counters: bit $x$ of each is set when at least one, two or three digits admit cell $x$, so
+27 cells are counted with five operations per digit (two ANDs and three ORs, all 27 cells at once). A cell in no digit's mask is a contradiction; cells with exactly
+two candidates ($\mathit{twice}\,\&\,\lnot \mathit{thrice}$) are the branching candidates; cells with one candidate that are not yet marked
+solved are naked singles. A naked single of digit $d$ at cell $x$ is placed by \textsc{ClearPeers}: $M_{d,b}$ is ANDed
+with \textsc{AfterPlacing}$[x]$ (removing $d$ from the rest of $x$'s row and box), the other two bands of $d$ are ANDed
+with \textsc{OtherBandsAfterPlacing}$[x]$ (removing $d$ from $x$'s column), $x$ is cleared from \texttt{unsolved}, and $x$'s row
+is cleared from $d$'s \texttt{openRows}. The other digits need no work, because $x$ is not in their masks. If any
+naked single was placed, the loop repeats; otherwise \textsc{Propagate} returns \emph{solved} when no cell has two or
+more candidates, and \emph{open} with the two-candidate cells otherwise.
+
+\subsection{Search and branching}
+
+\begin{algorithm}[H]
+\caption{\textsc{Search}$(S_t)$ at depth $t$}
+\label{alg:search}
+\begin{algorithmic}[1]
+\State $\mathit{progress} \gets \textsc{Propagate}(S_t)$
+\If{$\mathit{progress} = $ \textbf{contradiction}} \Return \EndIf
+\If{$\mathit{progress} = $ \textbf{solved}} \textsc{Record}$(S_t)$; \Return \EndIf
+\State $x \gets \textsc{ChooseGuessCell}(S_t, \mathit{pairs})$ \Comment{$\arg\max_{x \in \mathit{pairs}} \textsc{PeerScore}(x)$}
+\If{$x$ exists}
+  \State $d_1 < d_2 \gets$ the two candidates of $x$ \Comment{\textsc{NextValueIn}}
+  \State $S_{t+1} \gets S_t$; \ \textsc{Place}$(S_{t+1}, d_1, x)$; \ \textsc{Search}$(S_{t+1})$
+  \If{$\mathit{found} < \mathit{limit}$} \textsc{Place}$(S_t, d_2, x)$; \ \textsc{Search}$(S_t)$ \EndIf
+\Else
+  \State $x \gets \textsc{FewestCandidatesCell}(S_t)$ \Comment{fewest candidates, highest \textsc{PeerScore} among ties}
+  \For{each candidate $d$ of $x$, while $\mathit{found} < \mathit{limit}$}
+    \State $S_{t+1} \gets S_t$; \ \textsc{Place}$(S_{t+1}, d, x)$; \ \textsc{Search}$(S_{t+1})$
+  \EndFor
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+
+\Cref{alg:search} is a depth-first search that stops once \emph{limit} solutions are found; with limit 2 on a puzzle
+with one solution it explores the whole tree. The second child of a two-candidate branch reuses the parent's slot,
+since the parent is not needed afterwards. \textsc{Place} is the full placement used for guesses and clues: it removes
+the cell from all nine digits, gives it back to $d$, then calls \textsc{ClearPeers}. \textsc{Record} counts the solution
+in $\mathit{found}$ and writes the first one to the caller's grid.
+
+\textsc{ChooseGuessCell} takes the two-candidate cell with the highest \textsc{PeerScore}, the first in (band, bit)
+order among ties. \textsc{PeerScore}$(x)$ for cell $x$ at bit $i$ of band $b$ counts the unsolved cells among $x$'s 20 peers:
+\[
+\mathrm{popcount}\bigl(U_b \,\&\, \textsc{BandPeers}[i]\bigr) + \mathrm{popcount}\bigl((U_{b'} \,\&\, \mathrm{col}_i) \mid
+(U_{b''} \,\&\, \mathrm{col}_i)\ll 32\bigr),
+\]
+where $U$ are the \texttt{unsolved} masks, $b'$, $b''$ the other bands and $\mathrm{col}_i$ the three cells of $x$'s
+column in a band; packing the two other bands into one 64-bit word makes it two popcounts. At branch time, after
+propagation, the unsolved cells are exactly the cells with two or more candidates, so the score is the number of
+peers still open. We count one guess per two-candidate branch and $n-1$ for an $n$-candidate fallback cell, the
+number of binary decisions the branch represents.
+
+\textsc{Load} starts from all candidates, \texttt{checked} at 0 and all rows open, and places each clue with
+\textsc{Place} after checking that the clue is still a candidate; a repeated clue in a row, column or box fails that
+check and the puzzle has no solution. Clues are only placed, not propagated: the first \textsc{Propagate} does that.
+
+\subsection{Pitfalls}
+\label{sec:pitfalls}
+
+\Cref{sec:proofs} proves the solver correct. The \texttt{checked} masks make the fixed point cheap to detect but must be handled with care, and we hit four bugs
+worth recording for anyone reimplementing this. (1) Returning \emph{solved} as soon as \texttt{unsolved} is empty,
+before counting candidates, accepted grids in which a placement had emptied an earlier cell. (2) An update loop that
+skips digits with no open rows, as JCZSolve's does, never re-checks such a digit; our first version relied on that
+update to clear a placed digit's column, and recorded grids with a digit twice in a column. We now clear the column
+at placement time and do not skip digits. (3) Two naked singles in one band can conflict, so the search for the
+single's digit must be bounded. Bugs (1) and (2) showed only on the 1905 set, as a second ``solution'' of 5 to 7
+unique puzzles; bug (3) only under AddressSanitizer (a compiler option that reports
+out-of-bounds memory accesses) on puzzles with many solutions. (4) The row-single step originally restored the band's mask as the band rule had left it, putting back candidates
+the stack rule had just removed, so masks could grow. No test caught it: the stack rule usually ran again and
+removed them, and the solver agreed with tdoku everywhere. Writing the proofs of \cref{sec:proofs}, which rely on masks
+only shrinking ((I0) of \cref{lem:invariants}), exposed it; it happened about 21 times per puzzle on the hardest set. The fix, restoring the mask as
+the stack rule left it, changes no guess count and no timing beyond 0.5\%. Our correctness checks compare solution
+counts at limits 1, 2 and 3 with tdoku on all seven of tdoku's data sets, 709{,}764 puzzles including 10{,}000 with
+several solutions and 486{,}451 with none, compare with a naive counter on the repository's tests, and validate every
+solution; \texttt{make verify} runs the comparison with tdoku.
+
+\subsection{Work profile}
+
+\Cref{tab:work} counts what the solver does per puzzle. On the hardest set it propagates 275 times per puzzle (136
+branch nodes, each with up to two children); each propagation runs \textsc{UpdateBand} about 12 times, in 3.3 passes of the update
+loop. Placements come almost entirely from row singles (1{,}920 per puzzle) rather than naked
+singles (84), because the solver detects hidden singles only in rows; the matching rules turn box and column
+singles into row singles (\cref{sec:rules}). The stack rule runs on 70\% of band
+updates but changes something on only 40\% of its calls. Dividing the instruction count of \cref{tab:counters} by the
+band updates gives about 177 instructions per band update on the hardest set, everything included.
+
+\begin{table}[t]
+\centering
+\caption{Work per puzzle, limit 2.}
+\label{tab:work}
+\small
+\begin{tabular}{lrrr}
+\toprule
+& forum hardest 1106 & 17 clue & kaggle \\
+\midrule
+\textsc{Propagate} calls & 274.8 & 2.3 & 1.0 \\
+\textsc{Update} passes & 901.2 & 15.7 & 3.6 \\
+\textsc{UpdateBand} calls & 3360.8 & 117.7 & 36.8 \\
+\textsc{StackRule} calls (that changed a mask) & 2362.1 (948.3) & 93.3 (31.3) & 36.0 (9.8) \\
+row singles placed & 1919.7 & 70.2 & 47.2 \\
+naked singles placed & 84.4 & 1.2 & 0.0 \\
+branch nodes (fallback nodes) & 136.1 (1.55) & 0.7 (0.00) & 0.0 \\
+guesses & 137.7 & 0.7 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Engineering}
+
+We measured each change by alternating builds and taking medians (\cref{sec:setup}). Four details each moved the time
+by 3\% or more on the hard sets. Forcing \textsc{UpdateBand} to be inlined saved 9\%: clang otherwise emitted a call
+for each band update. The table-driven row singles of \cref{lem:singlerows} saved 5.6\% over per-row bit arithmetic.
+Not skipping digits whose rows are all placed saved 4\%. Replacing locked columns entirely by the stack rule saved 3\%.
+The small helpers (\textsc{Place}, \textsc{ClearPeers}, \textsc{ChooseGuessCell}, \textsc{FewestCandidatesCell},
+\textsc{NextValueIn}, \textsc{PeerScore}) are forced inline as well, so splitting the code into named functions for
+readability changed the timing by less than 1\%.
+Three changes that looked promising were slower and were dropped: processing only the stacks that changed (19\%
+slower), batching the stack rule once per digit per pass (14\% slower, because eliminations applied immediately help
+the rest of the pass), and forcing the stack rule inline (1\% slower).
+
+\section{Correctness}
+\label{sec:proofs}
+
+This section proves that FastBandSolver counts solutions exactly, up to the limit, returns a valid solution, stops,
+and never overruns its array of states. We refer to the code as described in \cref{sec:solver}.
+
+\paragraph{Notation.} \Cref{tab:notation} collects the symbols used in this section. All of them were introduced in
+\cref{sec:rules,sec:solver}; the table states them once, in the form the proofs use.
+
+\begin{table}[h!]
+\centering
+\caption{Notation for \cref{sec:proofs}. Code names are given where they differ.}
+\label{tab:notation}
+\small
+\begin{tabular}{l>{\raggedright\arraybackslash}p{11.2cm}}
+\toprule
+symbol & meaning \\
+\midrule
+$d$, $b$, $s$ & a digit $1,\dots,9$ (index $d-1$ in the code), a band $0,1,2$, a stack $0,1,2$ \\
+$x$, $y$ & cells. A cell of band $b$ is also a bit $9r+c$ of a band mask, for row $r\in\{0,1,2\}$ of the band and
+  column $c\in\{0,\dots,8\}$ \\
+row, box, column & a unit of the full grid (\cref{sec:terms}). \emph{Row $r$ of band $b$} is grid row $3b+r$; \emph{box $k$ of band $b$} is grid box $3b+k$ \\
+triad $(r,k)$ & the three cells where row $r$ and box $k$ of a band meet \\
+$S$ & a search state, made of the four fields below \\
+$M_{d,b}$ & the cells of band $b$ where $d$ can still go (\texttt{valueToBand[$d-1$][$b$]}) \\
+$K_{d,b}$ & $M_{d,b}$ as it was when \textsc{UpdateBand} last ran on it, 0 before that (\texttt{checked}) \\
+$U_b$ & the cells of band $b$ not yet marked solved (\texttt{unsolved}) \\
+$O_d$ & 9 bits, bit $3b+r$ set while $d$ has not been placed in row $r$ of band $b$ (\texttt{openRows}) \\
+$C(S)$ & the candidate set of $S$: all pairs $(x,d)$ with $x$ a cell of some band $b$ and $x\in M_{d,b}$. A
+  \emph{candidate of $x$} is a digit $d$ with $(x,d)\in C(S)$. Only the masks $M$ determine $C(S)$; $K$, $U$ and
+  $O$ are bookkeeping \\
+$\mathrm{Sol}(S)$ & $\mathrm{Sol}(C(S))$: the solutions consistent with $C(S)$ (\cref{sec:rules}) \\
+sound & a removal of pairs from $C(S)$ is sound when it leaves $\mathrm{Sol}(S)$ unchanged \\
+$P(M)$ & the column set of a band mask: the columns $c$ with a cell of $M$ in column $c$ (\texttt{bandColumns}) \\
+$A^{d,b}$ & the $3\times 3$ 0-1 matrix of rows against boxes of band $b$: entry $(r,k)$ is 1 when triad $(r,k)$ meets
+  $M_{d,b}$ (\texttt{boxCandidates}) \\
+$B^{d,s}$ & the $3\times 3$ 0-1 matrix of bands against the columns of stack $s$: entry $(b,j)$ is 1 when column $3s+j$
+  is in $P(M_{d,b})$ (\texttt{columnCandidates}) \\
+$\mathrm{supp}(A)$ & the entries of $A$ that lie on some perfect matching (\textsc{PermutationUnion}$[A]$) \\
+$t$ & a slot of the array of 82 states; \textsc{Search} at depth $t$ works on slot $t$ \\
+$L$, $f$, $n$ & the solution limit (\texttt{limit}), the number of solutions found so far (\texttt{found}), and the
+  number of solutions that agree with the clues \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The steps that change candidates.} Besides \textsc{Load}, four steps remove pairs from $C(S)$:
+\begin{itemize}
+\item the \emph{band rule}, line 3 of \cref{alg:band};
+\item the \emph{stack rule}, \cref{alg:stack}, called from line 7 of \cref{alg:band};
+\item the \emph{row-single placement}, lines 10--15 of \cref{alg:band}: for each row $r$ in $\mathit{newSingleRows}$ it
+  takes the one cell of row $r$ in $\mathit{bandCells}$ (the mask as line 3 left it), removes that cell from the masks
+  of all nine digits, then gives $d$ back its mask as it was just before (line 14);
+\item the \emph{naked-single placement} in \textsc{Propagate}: for a cell $x$ of band $b$ found to have one candidate,
+  it finds that candidate $d$ and calls \textsc{ClearPeers}$(S,d,b,x)$, which ANDs $M_{d,b}$ with
+  \textsc{AfterPlacing}$[x]$ (the band without the rest of $x$'s row and box) and $d$'s masks in the other two bands
+  with \textsc{OtherBandsAfterPlacing}$[x]$ (those bands without $x$'s column).
+\end{itemize}
+\textsc{Place}$(S,d,x)$, used by \textsc{Load} and \textsc{Search}, removes $x$ from the masks of the eight other
+digits, sets bit $x$ of $M_{d,b}$, and calls \textsc{ClearPeers}. All of these steps also clear bits of $U$ and $O$,
+which does not change $C(S)$.
+
+\begin{lemma}[every step is sound]
+\label{lem:steps}
+The band rule, the stack rule, the row-single placement and the naked-single placement are sound. Whenever
+\textsc{Update} or \textsc{Propagate} reports a contradiction, $\mathrm{Sol}(S)=\emptyset$. Hence \textsc{Propagate}
+either reports a contradiction for a state with no solutions, or returns a state with the same solutions it started
+with.
+\end{lemma}
+\begin{proof}
+Fix a solution $\sigma\in\mathrm{Sol}(S)$ at the moment of each step; a step is sound when $\sigma$ uses none of the
+pairs it removes.
+
+\emph{Band rule.} Line 3 keeps the cells of the triads in $\mathrm{supp}(A^{d,b})$ and removes the rest, which is sound
+by \cref{lem:band}.
+
+\emph{Stack rule.} For each stack $s$ it keeps, in each band $b$, the columns $3s+j$ with $\mathrm{supp}(B^{d,s})_{bj}=1$
+and removes $d$ from the rest of the stack's columns in that band, which is sound by \cref{lem:stack}.
+
+\emph{Row-single placement.} Let $r$ be a row in $\mathit{newSingleRows}$. By \cref{lem:singlerows}, row $r$ of band
+$b$ has exactly one cell $x$ in $\mathit{bandCells}$, and that is the cell the step takes. Between line 3 and line 13
+only the stack rule has run, and it only removes candidates, so at line 13 the cells of row $r$ in $M_{d,b}$ are $x$
+or none. By the row constraint $\sigma$ puts $d$ in some cell of row $r$, at a candidate, so if any solution exists,
+$\sigma(x)=d$, and the pairs $(x,d')$ with $d'\neq d$ that line 13 removes are unused. Line 14 restores $M_{d,b}$ to
+its value before line 13, so line 13 removes no pair of $d$ itself. If the stack rule had already removed $x$ from
+$M_{d,b}$, then $d$ has no candidate in row $r$, so $\mathrm{Sol}(S)=\emptyset$ and the removal is trivially sound;
+$x$ is then left with no candidate at all, which the next count in \textsc{Propagate} reports.
+
+\emph{Naked-single placement.} \textsc{Propagate} counts the candidates of the cells of band $b$ and then takes each
+cell $x$ of $U_b$ that had exactly one, $d$. Placements made earlier in the same loop only remove candidates, so when
+$x$ is reached its candidates are $d$ or none. If none is left the step reports a contradiction (see below).
+Otherwise $\sigma(x)=d$, and since a solution does not repeat $d$ in a unit, $\sigma$ puts $d$ in no other cell of
+$x$'s row, box or column. \textsc{AfterPlacing}$[x]$ removes $d$ from the rest of $x$'s row and box, and keeps $x$;
+\textsc{OtherBandsAfterPlacing}$[x]$ removes $d$ from $x$'s column in the other two bands. The cells of $x$'s column
+in its own band lie in $x$'s box, so every removed pair is $(y,d)$ with $y$ a peer of $x$, and unused.
+
+\emph{Contradictions.} \textsc{Update} reports one only at line 4 of \cref{alg:band}, when line 3 leaves the mask
+empty. Every triad in $\mathrm{supp}(A^{d,b})$ meets $M_{d,b}$, since its entry of $A^{d,b}$ is 1, so the mask is
+empty only when $\mathrm{supp}(A^{d,b})=0$, that is, when $A^{d,b}$ has no perfect matching, and then
+$\mathrm{Sol}(S)=\emptyset$ by \cref{lem:band}. \textsc{Propagate} reports one when some cell is in no mask
+($\mathit{once}\neq 2^{27}-1$) or when a naked single has lost its only candidate; in both cases some cell $x$ has no
+candidate, so no $\sigma$ can be consistent, since it would need $(x,\sigma(x))\in C(S)$.
+
+\textsc{Update} and \textsc{Propagate} change $C(S)$ only through these four steps, so the last sentence follows.
+\end{proof}
+
+\begin{lemma}[invariants]
+\label{lem:invariants}
+After \textsc{Load} has reset the state to all candidates, the following hold at every point of the solve, in every slot of the array.
+\begin{enumerate}
+\item[(I0)] \emph{Masks only shrink:} no step adds a cell to any mask $M_{d,b}$.
+\item[(I1)] A cell of band $b$ that is not in $U_b$ has at most one candidate.
+\item[(I2)] Before \textsc{UpdateBand} first runs on the mask $M_{d,b}$, $K_{d,b}=0$; from then on,
+  $M_{d,b}\subseteq K_{d,b}$.
+\item[(I3)] If bit $3b+r$ of $O_d$ is clear, then $d$ has at most one candidate cell in row $r$ of band $b$, and that
+  cell has no candidate other than $d$.
+\end{enumerate}
+\end{lemma}
+\begin{proof}
+A guess copies a whole state into the next slot, which keeps all four properties, so it suffices to check every step
+that writes to a state.
+
+(I0) Every write to a mask ANDs it with something (line 5 of \cref{alg:band} stores $M_{d,b}$ ANDed with a table entry), except two. \textsc{Place}$(S,d,x)$, with $x$ in band $b$, first clears $x$ from
+the masks of all nine digits and then sets bit $x$ of $M_{d,b}$; this adds nothing because $x\in M_{d,b}$ whenever
+\textsc{Place} is called. \textsc{Load} calls it only after checking that $x\in M_{d,b}$, and returns failure
+otherwise. \textsc{Search} calls it with a digit returned by \textsc{NextValueIn} on the state in slot $t$, so with
+$x\in M_{d,b}$ at that moment, and slot $t$ does not change between that call and the \textsc{Place}: a call of
+\textsc{Search} on a slot writes only to that slot and calls \textsc{Search} only on that slot or the next, so
+everything the first child of a two-candidate branch does is in slots $t+1$ and above; and each child of the fallback
+starts from a fresh copy of slot $t$. The row-single placement sets $M_{d,b}$ at line 14 of \cref{alg:band} back to $\mathit{digitMaskNow}$, the
+value it had at line 12; in between, line 13 only cleared bits, so this undoes line 13 for $d$ and adds nothing new.
+
+(I1) The bits of $U_b$ are only ever cleared, and only by \textsc{ClearPeers} (called by \textsc{Place} and by the
+naked-single placement) and by line 15 of \cref{alg:band}. When \textsc{Place}$(S,d,x)$ clears $x$, it has just
+removed $x$ from the masks of the other eight digits, so $x$'s only candidate is $d$. When the naked-single placement
+clears $x$, $x$'s only candidate is $d$, or it has none (\cref{lem:steps}). When line 15 clears a cell $x$ of
+$\mathit{placedCells}$, line 13 has removed $x$ from all nine masks and line 14 has given $d$ its mask back, so $x$'s
+only possible candidate is $d$. After that, by (I0), $x$ gains no candidate.
+
+(I2) $K_{d,b}$ is 0 initially and is written only at line 5 of \cref{alg:band}, which sets $M_{d,b}$ and $K_{d,b}$ to
+the same value. From then until the next \textsc{UpdateBand} on the same mask, $K_{d,b}$ does not change and, by (I0),
+$M_{d,b}$ only shrinks, so $M_{d,b}\subseteq K_{d,b}$.
+
+(I3) The bits of $O_d$ are only ever cleared, and only by \textsc{ClearPeers} and by line 15 of \cref{alg:band}.
+\textsc{ClearPeers}$(S,d,b,x)$ clears the bit of $x$'s row. At that moment $x$ has no candidate other than $d$ (as in
+(I1)), and \textsc{ClearPeers} itself ANDs $M_{d,b}$ with \textsc{AfterPlacing}$[x]$, which removes $d$ from every
+other cell of $x$'s row; so $d$'s only possible candidate cell in the row is $x$. Line 15 clears the bits of the rows
+in $\mathit{newSingleRows}$; for each such row, the only cell of $M_{d,b}$ in it is the placed cell $x$, or none
+(\cref{lem:steps}), and lines 13--14 leave $x$ with no candidate other than $d$. After that, by (I0), the row gains no
+candidate cell for $d$ and $x$ gains no candidate.
+\end{proof}
+
+\begin{lemma}[termination and depth]
+\label{lem:termination}
+\textsc{Update}, \textsc{Propagate} and \textsc{Search} terminate. When \textsc{Search} is called on slot $t$, the
+state there has at most $81-t$ unsolved cells (cells in $U_0$, $U_1$ or $U_2$); it writes a child to slot $t+1$ only
+when $t\le 80$. So the 82 slots, numbered 0 to 81, suffice.
+\end{lemma}
+\begin{proof}
+\textsc{UpdateBand} has no loop other than its fixed loop over nine digits, so every call of it ends.
+
+\emph{Update.} Let $N$ be the number of masks with $M_{d,b}\neq K_{d,b}$, and compare the pairs $\Phi=(|C(S)|, N)$
+lexicographically: first by $|C(S)|$, then by $N$. Each call of \textsc{UpdateBand} makes $\Phi$ strictly smaller. If
+the call removes a candidate, $|C(S)|$ falls, and by (I0) no step adds one. If it removes none, no mask changes, and
+the only other write is to $K_{d,b}$ of the mask it was called on: that mask had $M_{d,b}\neq K_{d,b}$ (otherwise
+\textsc{Update} would not have called it) and now has $K_{d,b}=M_{d,b}$, so $N$ falls by one. As $0\le|C(S)|\le 729$ and
+$0\le N\le 27$, there are finitely many calls. Each pass of \textsc{Update} makes at most 27 calls, and every pass
+except the last makes at least one, so there are finitely many passes.
+
+\emph{Propagate.} Its loop repeats only when $\mathit{placed}$ is true, that is, after at least one naked-single
+placement in the pass. That placement took a cell $x$ of $U_b$ (the singles are drawn from
+$\mathit{once}\,\&\,\lnot\mathit{twice}\,\&\,U_b$, and the only cells cleared from $U_b$ in between are other singles)
+and \textsc{ClearPeers} cleared it from $U_b$. No step adds a cell to $U$, so the number of unsolved cells falls by at
+least one per repetition, and there are at most 81 repetitions.
+
+\emph{Search.} Write $|U|$ for the number of unsolved cells of a state. We show that every recursive call of
+\textsc{Search} is made on a state with smaller $|U|$ than the state its caller started with. A call branches only
+after \textsc{Propagate} returned \emph{open}, so some cell has two or more candidates ($\mathit{multiple}\neq 0$), and
+by (I1) every such cell is unsolved. The branch cell $x$ is unsolved: a two-candidate cell by (I1), and a fallback cell
+because \textsc{FewestCandidatesCell} looks only at the cells of $U$. Each child is the parent's state, which
+\textsc{Propagate} has not made larger in $|U|$, followed by \textsc{Place} on $x$, which clears $x$ from $U$. This
+holds for the children in slot $t+1$ and for the second child of a two-candidate branch, which reuses slot $t$. So
+along any chain of recursive calls $|U|$ strictly falls, the chain has at most 82 calls, and since each call makes at
+most nine recursive calls directly, the whole search is finite.
+
+\emph{Slots.} The call on slot 0 starts with $|U|\le 81$. A child in slot $t+1$ starts with at most $|U|-1\le 81-(t+1)$
+unsolved cells, and a child in slot $t$ with fewer than its caller, so by induction a call on slot $t$ starts with
+$|U|\le 81-t$. A call writes to slot $t+1$ only when it branches, which needs an unsolved cell, so $1\le 81-t$, that
+is, $t\le 80$.
+\end{proof}
+
+\begin{lemma}[the fixed point]
+\label{lem:fixedpoint}
+Suppose \textsc{Propagate} returns \emph{open} or \emph{solved}. Then in the returned state:
+\begin{enumerate}
+\item[(a)] every mask equals its checked copy, $M_{d,b}=K_{d,b}$;
+\item[(b)] if $M_{d,b}\neq 0$, then $\mathrm{supp}(A^{d,b})=A^{d,b}\neq 0$: every 1 of $A^{d,b}$ lies on a perfect
+  matching, and $d$ has a candidate in every row and every box of band $b$;
+\item[(c)] if the three masks of $d$ are all nonzero, then $\mathrm{supp}(B^{d,s})=B^{d,s}\neq 0$ for every stack $s$:
+  every 1 of $B^{d,s}$ lies on a perfect matching, and $d$ has a candidate in every column;
+\item[(d)] if $d$ has exactly one candidate cell $x$ in some row, then $d$ is the only candidate of $x$;
+\item[(e)] if the result is \emph{solved}, every mask is nonzero.
+\end{enumerate}
+\end{lemma}
+\begin{proof}
+(a) \textsc{Propagate} returns right after an \textsc{Update} that succeeded and a count that placed nothing, so no
+mask changed after the last pass of that \textsc{Update}. That pass ran no \textsc{UpdateBand}, so it found
+$M_{d,b}=K_{d,b}$ for every mask.
+
+\emph{The last update of a mask.} Let $M_{d,b}\neq 0$ at the end. By (a), $K_{d,b}\neq 0$, so by (I2)
+\textsc{UpdateBand} has run on this mask; consider the last such call. At its line 5 it set $M_{d,b}$ and $K_{d,b}$ to
+$\mathit{bandCells}$, and $K_{d,b}$ did not change afterwards. From then on $M_{d,b}\subseteq K_{d,b}$ by (I2), $M_{d,b}$
+only shrinks by (I0), and $M_{d,b}=K_{d,b}$ at the end, so $M_{d,b}$ stayed equal to $\mathit{bandCells}$ from that line 5
+to the end.
+
+(b) In that last call let $A$ be the matrix of line 2, so that line 3 set $\mathit{bandCells}$ to the cells of
+$M_{d,b}$ lying in triads of $\mathrm{supp}(A)$. Each such triad has a 1 in $A$, so it contains a cell of $M_{d,b}$,
+which line 3 keeps; hence the triads that meet $\mathit{bandCells}$ are exactly those of $\mathrm{supp}(A)$, and the
+final mask has $A^{d,b}=\mathrm{supp}(A)$. By \cref{lem:idempotent},
+$\mathrm{supp}(A^{d,b})=\mathrm{supp}(\mathrm{supp}(A))=\mathrm{supp}(A)=A^{d,b}$. It is nonzero because the mask is,
+so by \cref{lem:idempotent} it has a 1 in every row and every column: $d$ has a candidate in every row and every box
+of the band.
+
+(c) Fix $d$ with three nonzero masks, and one of them, $M_{d,b}$. Number the calls of \textsc{UpdateBand} on it
+$1,\dots,k$, write $K_i$ for the value it gave $K_{d,b}$ at line 5, and set $K_0=0$. Call $i$ runs
+\textsc{StackRule}$(d)$ at line 7 exactly when $P(K_i)\neq P(K_{i-1})$, since $\mathit{lastChecked}=K_{i-1}$ and
+$\mathit{bandCells}=K_i$. As $K_k\neq 0$ and $P(K_0)=0$, some call does; let $i^*$ be the last one. Then
+$P(K_{i^*})=P(K_{i^*+1})=\dots=P(K_k)$. Between line 5 of call $i$ and line 5 of call $i+1$ the mask lies between
+$K_{i+1}$ and $K_i$ (by (I0) and (I2)), and after call $k$ it equals $K_k$, so from line 5 of call $i^*$ to the end the
+column set $P(M_{d,b})$ never changes; and call $i^*$ runs \textsc{StackRule}$(d)$ after that line 5.
+
+Now let $\tau$ be the last run of \textsc{StackRule}$(d)$ in the whole solve. By the previous paragraph, applied to
+each of the three masks, $\tau$ comes after the moment from which each column set of $d$ stays fixed. So $\tau$ reads
+the final column sets, and its matrices are the final $B^{d,s}$; and $\tau$ changes no column set, so for each stack
+$s$ and band $b$ the kept columns $\mathrm{supp}(B^{d,s})$ include every column of row $b$ of $B^{d,s}$. Since
+$\mathrm{supp}(B^{d,s})\le B^{d,s}$ entrywise, $\mathrm{supp}(B^{d,s})=B^{d,s}$. By (b) the band of each mask has a
+candidate of $d$ in every box, and the box of band $b$ in stack $s$ lies in the stack's columns, so every row of
+$B^{d,s}$ is nonzero; hence $B^{d,s}\neq 0$, and by \cref{lem:idempotent} it has a 1 in every column.
+
+(d) Let $x$ be in row $r$ of band $b$; then $M_{d,b}\neq 0$. If bit $3b+r$ of $O_d$ is clear, (I3) gives the claim
+directly. Otherwise the bit was set throughout, so in the last call of \textsc{UpdateBand} on $M_{d,b}$ row $r$ was
+open. That call's $\mathit{bandCells}$ is the final mask, in which row $r$ has exactly one cell, $x$; so by
+\cref{lem:singlerows} row $r$ is in $\mathit{singleRows}$ and hence in $\mathit{newSingleRows}$, and lines 13--14
+removed $x$ from the masks of the other eight digits. By (I0) $x$ never regains them.
+
+(e) For \emph{solved}, $\mathit{twice}=0$ and $\mathit{once}=2^{27}-1$ in every band, so every cell has exactly one
+candidate, and since the count placed nothing, no cell of $U$ had one: $U$ is empty. We show that no digit $d$ is the
+candidate of two cells $x\neq y$ of the same row $r$ of band $b$. The cell $x$ left $U$ in one of the two ways listed in
+the proof of (I1). If \textsc{ClearPeers}$(S,d',b,x)$ removed it, then $x$'s only candidate was $d'$ at that moment, so
+$d'=d$ by (I0), and \textsc{ClearPeers} removed $d$ from $y$ through \textsc{AfterPlacing}$[x]$. If line 15 of
+\cref{alg:band} removed it for a row single of some digit $d'$, then lines 13--14 left $x$ only $d'$, so again $d'=d$,
+and row $r$ of $M_{d,b}$ held only $x$ at that moment (\cref{lem:singlerows}), so $y$ had already lost $d$. Either way
+$y$ lost $d$ for good by (I0), a contradiction. So the nine cells of each row hold nine different digits, every digit
+has a cell in every row, and no mask is zero.
+\end{proof}
+
+\begin{theorem}[correctness]
+\label{thm:correct}
+Let $n$ be the number of solutions that agree with the clues of the input grid. \textsc{CountSolutions} with limit
+$L\ge 1$ returns $\min(L, n)$. \textsc{Solve} returns true exactly when $n\ge 1$, and then writes one of those
+solutions to the output grid. Both terminate and use at most 82 states.
+\end{theorem}
+\begin{proof}
+\emph{What \textsc{Place} removes.} For a cell $x$ and a digit $d$, let $R(x,d)$ be the pairs $(x,e)$ with $e\neq d$
+together with the pairs $(y,d)$ with $y$ a peer of $x$. \textsc{Place}$(S,d,x)$ removes from $C(S)$ exactly the pairs
+of $R(x,d)$ that are present: it removes $x$ from the masks of the other eight digits, and \textsc{ClearPeers} removes
+$d$ from the rest of $x$'s row and box (\textsc{AfterPlacing}$[x]$) and from $x$'s column in the other two bands
+(\textsc{OtherBandsAfterPlacing}$[x]$); the cells of $x$'s column in its own band are in its box. By (I0) it adds no
+pair. A solution $\sigma$ uses no pair of $R(x,d)$ exactly when $\sigma(x)=d$: if $\sigma(x)=d$ it uses $(x,d)$, which
+is not in $R(x,d)$, and puts $d$ in no peer of $x$; if $\sigma(x)=e\neq d$ it uses $(x,e)\in R(x,d)$. Hence
+\[
+\mathrm{Sol}(\textsc{Place}(S,d,x))=\{\sigma\in\mathrm{Sol}(S):\sigma(x)=d\}. \tag{$*$}
+\]
+
+\emph{Load.} \textsc{Load} starts from the state with every pair as a candidate, so $\mathrm{Sol}$ is the set of all
+solutions. It takes the clues in cell order; for a clue $d$ at cell $y$, it fails if $(y,d)$ has already been removed,
+and otherwise calls \textsc{Place}$(S,d,y)$. Each cell holds at most one clue, so $(y,d)$ can have been removed only
+by an earlier clue $d$ at a peer of $y$. So \textsc{Load} fails exactly when two clues repeat a digit in a unit, and
+then no solution agrees with the clues: $n=0$. Otherwise, by $(*)$ applied once per clue, the state $S_0$ it returns
+has $\mathrm{Sol}(S_0)$ equal to the set of solutions that agree with the clues, so $|\mathrm{Sol}(S_0)|=n$.
+
+\emph{Solved states.} Suppose \textsc{Propagate} returns \emph{solved}. Then $\mathit{once}=2^{27}-1$ and
+$\mathit{twice}=0$ in every band, so every cell has exactly one candidate; let $G$ be the grid that puts each cell's
+candidate in it. By \cref{lem:fixedpoint}(e) every mask is nonzero, so by \cref{lem:fixedpoint}(b) and (c) every digit
+has a candidate in every row, every box and every column. A unit has nine cells, each with one candidate, and each of
+the nine digits is among them, so each digit appears exactly once: $G$ is a solution. It uses only pairs of $C(S)$, so
+$G\in\mathrm{Sol}(S)$; and any $\sigma\in\mathrm{Sol}(S)$ must give each cell its only candidate, so
+$\mathrm{Sol}(S)=\{G\}$.
+
+\emph{Branches.} Suppose \textsc{Propagate} returns \emph{open}. Every cell has a candidate
+($\mathit{once}=2^{27}-1$), no unsolved cell has exactly one (it would have been placed as a naked single), and some
+cell has two or more ($\mathit{multiple}\neq 0$), which is unsolved by (I1). \textsc{Search} picks an unsolved cell
+$x$: a cell of $\mathit{pairs}$, with exactly two candidates, or else the cell \textsc{FewestCandidatesCell} returns,
+with two or more. It then calls \textsc{Search} on one child per candidate $d$ of $x$, in increasing order of $d$,
+each child being \textsc{Place}$(S,d,x)$; the children of the fallback, and the first child of a two-candidate branch,
+are copies in slot $t+1$, and the second child of a two-candidate branch is slot $t$ itself, which is unchanged since
+\textsc{Propagate} returned (proof of \cref{lem:invariants}). Every $\sigma\in\mathrm{Sol}(S)$ gives $x$ one of its
+candidates, so by $(*)$ the children's solution sets partition $\mathrm{Sol}(S)$.
+
+\emph{Counting.} We show that if \textsc{Search} is called on a state $S$ while $\mathit{found}=f<L$, it returns with
+$\mathit{found}=\min(L, f+|\mathrm{Sol}(S)|)$. The recursion is finite (\cref{lem:termination}), so we may assume the
+claim for every call that this one makes. By \cref{lem:steps}, \textsc{Propagate} either reports a contradiction, and
+then $\mathrm{Sol}(S)=\emptyset$ and \textsc{Search} returns with $\mathit{found}=f$, or keeps $\mathrm{Sol}(S)$
+unchanged. If it returns \emph{solved}, $|\mathrm{Sol}(S)|=1$ and \textsc{Record} adds one: $f+1\le L$. If it returns
+\emph{open}, let the children be $S_1,\dots,S_m$ in the order they are searched, with solution sets of sizes
+$n_1,\dots,n_m$ summing to $|\mathrm{Sol}(S)|$. \textsc{Search} calls the next child only while $\mathit{found}<L$
+(line 8 of \cref{alg:search} for the second child of a two-candidate branch, the loop condition for the fallback). By
+the claim for the children, after child $i$ either $\mathit{found}=L$ and the search stops, which is
+$\min(L, f+|\mathrm{Sol}(S)|)$ because $f+n_1+\dots+n_i\ge L$; or $\mathit{found}=f+n_1+\dots+n_i<L$ and the next child
+starts with fewer than $L$ found. After the last child, $\mathit{found}=\min(L, f+n_1+\dots+n_m)$.
+
+\emph{The two entry points.} Both set $\mathit{found}=0$ and $\mathit{limit}=L$ and, if \textsc{Load} succeeds, call
+\textsc{Search} on $S_0$; if it fails, $n=0$ and $\mathit{found}$ stays 0. By the claim, $\mathit{found}=\min(L,n)$ at
+the end, which \textsc{CountSolutions} returns. \textsc{Solve} uses $L=1$ and returns whether $\mathit{found}>0$, that
+is, whether $n\ge 1$. Its single call of \textsc{Record} writes the grid $G$ of a solved state $S$ to the output (each
+cell gets the digit whose mask contains it). Every step from $S_0$ to $S$ only removes candidates, so
+$G\in\mathrm{Sol}(S)\subseteq\mathrm{Sol}(S_0)$: $G$ agrees with the clues. Termination and the bound of 82 states are
+\cref{lem:termination}.
+\end{proof}
+
+\begin{proposition}[box and column hidden singles are redundant]
+\label{prop:hidden}
+Let $S$ be a state returned by \textsc{Propagate} as \emph{open} or \emph{solved}, and $d$ a digit.
+\begin{enumerate}
+\item[(a)] If $d$ has exactly one candidate cell $x$ in some box, then $x$ is also $d$'s only candidate cell in its
+  row, and $d$ is the only candidate of $x$.
+\item[(b)] If the three masks of $d$ are nonzero and $d$ has exactly one candidate cell $x$ in some column, the same
+  holds.
+\end{enumerate}
+So a rule that places hidden singles in boxes and columns would remove no candidate from such a state.
+\end{proposition}
+\begin{proof}
+Let $x$ be in row $r$ and box $k$ of band $b$; box $k$ of the band lies in stack $k$, and $x$ is in column $3k+j$ for
+some $j\in\{0,1,2\}$.
+
+(a) Since $x$ is the only cell of box $k$ in $M_{d,b}$, the triads $(r',k)$ with $r'\neq r$ contain no cell of
+$M_{d,b}$: column $k$ of $A^{d,b}$ has a single 1, in row $r$. As $M_{d,b}\neq 0$, \cref{lem:fixedpoint}(b) gives
+$\mathrm{supp}(A^{d,b})=A^{d,b}\neq 0$, so $A^{d,b}$ has a perfect matching. Every perfect matching has a 1 in column $k$,
+which can only be $(r,k)$, so every perfect matching pairs row $r$ with box $k$, and none uses an entry $(r,k')$ with
+$k'\neq k$. These entries are therefore not in $\mathrm{supp}(A^{d,b})=A^{d,b}$: row $r$ has no candidate of $d$
+outside box $k$. Inside box $k$, the only candidate of $d$ is $x$. So $x$ is $d$'s only candidate cell in row $r$, and
+by \cref{lem:fixedpoint}(d) $d$ is the only candidate of $x$.
+
+(b) Since $x$ is $d$'s only candidate cell in column $3k+j$, column $j$ of $B^{d,k}$ has a single 1, in row $b$. As the
+three masks of $d$ are nonzero, \cref{lem:fixedpoint}(c) gives $\mathrm{supp}(B^{d,k})=B^{d,k}\neq 0$, and the
+argument of (a), with bands in place of rows and the stack's columns in place of boxes, shows that row $b$ of
+$B^{d,k}$ has no 1 other than $(b,j)$: band $b$ has candidates of $d$ in no column of stack $k$ except $3k+j$. The
+cells of band $b$ in stack $k$ are those of box $k$, so every candidate of $d$ in box $k$ is in column $3k+j$, where the
+only one is $x$. So $x$ is $d$'s only candidate cell in box $k$, and (a) applies.
+\end{proof}
+
+\noindent Part (b) needs the three masks of $d$ to be nonzero. A state where one is zero has no solutions, since $d$
+cannot be placed in that band, so a hidden single there cannot change which solutions are found. We found no such
+state among the 4{,}464{,}042 states that \textsc{Propagate} returned as open or solved on all 709{,}764 puzzles of the
+seven data sets, at limit 2.
+
+The proofs above are about the algorithm; they do not rule out coding errors. Two independent checks cover the code:
+every table is built from its definition at compile time, and the solver is tested against tdoku and against a naive
+counter on puzzles with zero, one and many solutions (\cref{sec:pitfalls}).
+
+\section{Experimental setup}
+\label{sec:setup}
+
+All measurements are on an Apple M4 Max (14 cores, 36\,GB), macOS 15.6, Apple clang 17.0.0 with \texttt{-O3
+-march=native}, single-threaded. We use tdoku's five standard data sets~\cite{dillon2019nerdsniped}: the 49{,}158
+known 17-clue puzzles~\cite{royle17clue,champagne2022all17}, magictour's top 1465~\cite{stertenbrink2005top1465}, the forum-hardest collections (375
+puzzles from ``1106''\footnote{tdoku's documentation describes this set as 376 puzzles; its data file holds 375.} and
+48{,}766 from ``1905\_11+'')~\cite{forumhardest}, and 100{,}000 puzzles from the Kaggle
+data set~\cite{park2016kaggle}. Following tdoku's benchmarks, every solver is called with a solution limit of 2, so it
+must show uniqueness, and converting the puzzle string is part of each call. Before timing, each solver must solve
+every puzzle with a valid solution and agree with the others on the number of solutions. Solvers take turns over the
+whole data set, and we report the median of seven runs. tdoku is built from our ARM port~\cite{kelly2026tdokuarm}, described in \cref{sec:arm}. \texttt{make sota} in the repository reproduces \cref{tab:sota} for every solver but JCZSolve (see below), up to run-to-run variation.
+
+\subsection{ARM and x86}
+\label{sec:arm}
+
+\paragraph{Why the processor family matters.} Almost all published Sudoku benchmarks, including tdoku's, were run on
+x86 processors from Intel and AMD. Our machine is an Apple M4 Max, whose cores use the 64-bit ARM instruction set
+(AArch64). The two families differ in the SIMD instructions they offer (\cref{sec:terms}). x86 has 128-bit SSE, 256-bit
+AVX2 and, on some Intel processors, 512-bit AVX-512, with a rich set of byte-shuffle and bit-counting instructions.
+AArch64 has 128-bit NEON, whose instructions overlap with SSE's but are not the same. Code written with x86 SIMD
+\emph{intrinsics} (C functions that map one-to-one onto SIMD instructions, such as \texttt{\_mm\_shuffle\_epi8}) does
+not compile on ARM at all. Plain C and C++ code, by contrast, compiles for either family, and the compiler chooses the
+instructions.
+
+\paragraph{The solvers that needed no porting.} FastBandSolver, JCZSolve, jsolve and kudoku are plain C or C++ with
+no SIMD intrinsics. They use 32- or 64-bit integer operations, small lookup tables, and, in FastBandSolver's case,
+\texttt{std::popcount}, which compiles to a hardware bit-count on both families. We built them unchanged with Apple
+clang and \texttt{-O3 -march=native}. The same source files build unchanged on x86, where we measure them in
+\cref{sec:x86}.
+
+\paragraph{Porting tdoku.} tdoku is written against x86 intrinsics and did not build on ARM: its SIMD header includes
+the x86-only \texttt{immintrin.h}. All of its SIMD code goes through two small vector classes: \texttt{Bitvec08x16},
+eight 16-bit lanes in a 128-bit register, and \texttt{Bitvec16x16}, sixteen lanes in 256 bits. The only ARM build we
+found translated the x86 intrinsics with the SIMDe library, and because compilers for ARM do not define x86 feature macros such as \texttt{\_\_SSE4\_1\_\_}, tdoku's
+own preprocessor checks sent that build down its slowest code path, written for 2000-era SSE2. Our port~\cite{kelly2026tdokuarm}
+adds a native NEON implementation of \texttt{Bitvec08x16} in which every method reproduces the behavior of tdoku's
+SSSE3/SSE4 code path exactly, including details such as how a byte shuffle treats out-of-range indices and which lane
+wins a tie in a minimum search. \texttt{Bitvec16x16} becomes a pair of 128-bit halves, as tdoku already does on x86
+processors without AVX2. The solver itself is unchanged, and the x86 build is unaffected: the preprocessed header is
+byte-identical for every x86 instruction set tdoku supports. We verified the port three ways. (1) Against real x86
+tdoku: the unmodified x86 build, run on the M4 through Apple's Rosetta 2 translator, and the native ARM build return
+the same solution counts, solutions and guess counts on all 199{,}807 puzzles of tdoku's test and benchmark sets. (2)
+Method by method: the NEON class and the original SSE4.1 code (built on ARM through SIMDe) agree on 62.9 million
+random and edge-case inputs, and the test detects each of three deliberately planted bugs. (3) Sanitizers report
+no errors. \Cref{tab:port} shows what the port is worth: native NEON is 1.3 times faster than the SSE4.1 path through
+SIMDe and about 3 times faster than the SSE2 path, and 1.23 times faster than the x86 build under Rosetta.
+
+\begin{table}[t]
+\centering
+\caption{tdoku on the M4 Max, seconds per puzzle, limit 2, under three ways of running its x86 SIMD code on
+ARM~\cite{kelly2026tdokuarm}.}
+\label{tab:port}
+\small
+\begin{tabular}{lrrr}
+\toprule
+data set & native NEON (our port) & SIMDe, SSE4.1 path & SIMDe, SSE2 path \\
+\midrule
+17 clue & \num{2.89e-6} & \num{3.68e-6} & \num{8.54e-6} \\
+magictour top 1465 & \num{8.04e-6} & \num{1.071e-5} & \num{2.400e-5} \\
+forum hardest 1106 & \num{7.24e-5} & \num{9.49e-5} & \num{2.199e-4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What the port cannot recover.} NEON registers are 128 bits wide, so on the M4 tdoku runs its 256-bit
+operations as two 128-bit ones, as on x86 without AVX2; the fastest published tdoku results use AVX2 or AVX-512. Width is not the whole story,
+though: on AMD's Zen~3, which runs tdoku's 256-bit vectors natively, FastBandSolver still keeps level with it
+(\cref{sec:x86}).
+
+
+\section{Results}
+\label{sec:results}
+
+\begin{table}[t]
+\centering
+\caption{Time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2, median of 7 interleaved runs, Apple M4 Max.
+Every solver solves every puzzle with a valid solution and agrees on the solution counts. Guesses are each solver's
+own count of binary decisions. Between two complete runs of this benchmark on different occasions, every solver's
+times moved by up to 3\%, together; ratios between solvers moved by up to 0.03.}
+\label{tab:sota}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
+\midrule
+17 clue & 49158 & \textbf{\num{1.79e-6}} & \num{2.90e-6} & \num{2.38e-6} & \num{2.96e-6} & \num{1.45e-5} \\
+&& (0.68) & (0.57) & (2.37) & (0.60) & (4.51) \\[2pt]
+magictour top 1465 & 1465 & \textbf{\num{6.90e-6}} & \num{8.31e-6} & \num{1.00e-5} & \num{1.28e-5} & \num{6.42e-5} \\
+&& (10.3) & (8.94) & (22.0) & (12.1) & (33.9) \\[2pt]
+forum hardest 1106 & 375 & \textbf{\num{6.21e-5}} & \num{7.27e-5} & \num{1.07e-4} & \num{1.49e-4} & \num{5.62e-4} \\
+&& (138) & (110) & (363) & (183) & (326) \\[2pt]
+forum hardest 1905 11+ & 48766 & \textbf{\num{3.99e-5}} & \num{4.65e-5} & \num{5.59e-5} & \num{9.04e-5} & \num{2.72e-4} \\
+&& (81.0) & (61.7) & (167) & (100) & (142) \\[2pt]
+kaggle & 100000 & \textbf{\num{8.64e-7}} & \num{9.22e-7} & \num{1.17e-6} & \num{1.55e-6} & \num{7.48e-6} \\
+&& (0) & (0) & (0) & (0) & (0) \\[2pt]
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:sota} compares FastBandSolver with tdoku and with the fastest cell-based (jsolve), band-based (JCZSolve)
+and exact-cover (kudoku) solvers from tdoku's benchmark. FastBandSolver is fastest on every set: 1.17$\times$ faster
+than tdoku on the 375 hardest puzzles, 1.17$\times$ on the 48{,}766 of the second forum set, 1.20$\times$ on
+magictour, 1.62$\times$ on 17-clue and 1.07$\times$ on kaggle. JCZSolve is not part of \texttt{make sota} because its
+source leaves the copyright unspecified;\footnote{In a 2018 forum thread its three contributors agreed to its use in
+rust\_sudoku: zhouyundong\_2012 without conditions, JasonLion under AGPLv3, and champagne for free use. We did not
+treat this as a license for redistribution.} we built it from tdoku's copy for local measurement only.
+
+tdoku still makes the fewest guesses: its triad propagation and configuration branching leave a 20\% smaller tree
+than ours on the hardest set. FastBandSolver wins on cost per node. Hardware counters (\cref{tab:counters}) show it
+retiring 23\% fewer instructions than tdoku per hard puzzle at a slightly lower IPC.
+
+\begin{table}[t]
+\centering
+\caption{Instructions and cycles per puzzle, limit 2, from the processor's counters.}
+\label{tab:counters}
+\begin{tabular}{llrrr}
+\toprule
+data set & solver & instructions & cycles & IPC \\
+\midrule
+forum hardest 1106 & FastBandSolver & 594{,}597 & 252{,}285 & 2.36 \\
+ & tdoku & 768{,}515 & 298{,}876 & 2.57 \\
+ & JCZSolve & 936{,}071 & 434{,}332 & 2.16 \\
+\midrule
+17 clue & FastBandSolver & 18{,}984 & 7{,}668 & 2.48 \\
+ & tdoku & 34{,}120 & 12{,}131 & 2.81 \\
+ & JCZSolve & 18{,}286 & 10{,}216 & 1.79 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Ablation.} \Cref{tab:ablation} switches the three changes of \cref{sec:solver} on and off in the same
+engine. With all three off the search is JCZSolve's (361 vs.\ 363 guesses on the hardest set), and the engine is about 9\% slower than JCZSolve per node. Peer-count branching is the largest single effect: it removes 45\% of the guesses on the hardest set and 27\% of the time. The stack rule removes another 20\% of the guesses. The fallback
+fires at only 1.1\% of branch nodes on the hardest set, yet choosing a fewest-candidates cell there instead of the
+first unsolved one removes 12\% of the guesses and 12\% of the time: these nodes tend to be near the root, and a
+first unsolved cell often has five or more candidates. Of that gain, 3\% of the time comes from the peer-count tie
+break. On the easy sets the stack rule costs 4--6\%: kaggle puzzles need no guesses, and there the extra
+lookups are pure overhead.
+
+\begin{table}[t]
+\centering
+\caption{Ablation: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2. Each variant is a separate
+build of the same code; variants ran one after another, each taking the median of 5 runs per data set, and we report
+the better of two such sweeps.}
+\label{tab:ablation}
+\small
+\begin{tabular}{cccrrrrr}
+\toprule
+peer & stack & fewest & hardest 1106 & hardest 1905 & magictour & 17 clue & kaggle \\
+branching & rule & fallback & & & & & \\
+\midrule
+ & & & \num{1.168e-4} & \num{6.03e-5} & \num{1.03e-5} & \num{2.11e-6} & \num{7.9e-7} \\
+&&& (361) & (166) & (22.0) & (2.4) & \\[2pt]
+ & & \checkmark & \num{1.036e-4} & \num{5.77e-5} & \num{1.02e-5} & \num{2.00e-6} & \num{7.9e-7} \\
+&&& (305) & (155) & (21.7) & (1.9) & \\[2pt]
+ & \checkmark & & \num{1.080e-4} & \num{5.42e-5} & \num{9.6e-6} & \num{2.00e-6} & \num{8.4e-7} \\
+&&& (315) & (144) & (18.8) & (1.4) & \\[2pt]
+ & \checkmark & \checkmark & \num{9.27e-5} & \num{5.10e-5} & \num{9.5e-6} & \num{1.95e-6} & \num{8.5e-7} \\
+&&& (262) & (133) & (18.5) & (1.2) & \\[2pt]
+\checkmark & & & \num{8.51e-5} & \num{4.87e-5} & \num{7.3e-6} & \num{1.80e-6} & \num{7.9e-7} \\
+&&& (197) & (105) & (12.3) & (1.1) & \\[2pt]
+\checkmark & & \checkmark & \num{7.51e-5} & \num{4.62e-5} & \num{7.4e-6} & \num{1.74e-6} & \num{7.9e-7} \\
+&&& (173) & (99) & (12.1) & (0.9) & \\[2pt]
+\checkmark & \checkmark & & \num{7.02e-5} & \num{4.13e-5} & \num{6.9e-6} & \num{1.85e-6} & \num{8.5e-7} \\
+&&& (157) & (86) & (10.4) & (0.8) & \\[2pt]
+\checkmark & \checkmark & \checkmark & \textbf{\num{6.21e-5}} & \textbf{\num{3.94e-5}} & \textbf{\num{6.8e-6}} & \num{1.80e-6} & \num{8.4e-7} \\
+&&& (138) & (81) & (10.2) & (0.7) & \\[2pt]
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Finding one solution.} Every result above checks uniqueness, with a limit of 2. With a limit of 1 a
+solver only has to find one solution, stops there, and must write it out; the order in which it tries the two digits
+of a guess now matters, and the whole tree no longer has to be explored. \Cref{tab:limit1} repeats the comparison at
+limit 1. FastBandSolver is fastest on all five sets here too: $1.36\times$ faster than tdoku on the hardest set,
+$1.18\times$ on the second forum set, $1.23\times$ on magictour, $1.61\times$ on 17-clue and $1.07\times$ on kaggle.
+JCZSolve comes closer at limit 1 than at limit 2, within 4\% on the hardest set, since stopping at the first solution
+removes much of the benefit of a smaller tree; tdoku still makes the fewest guesses. Measuring this exposed one cost that
+only limit 1 pays: copying out the solution first looked up each cell's digit by scanning the digits' masks, about
+\SI{5e-7}{\second} per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
+removed it; the numbers here are with that change, which does not affect limit 2, where no solution is copied.
+\texttt{make sota LIMIT=1} reproduces the table for every solver but JCZSolve.
+
+\begin{table}[t]
+\centering
+\caption{Finding one solution: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 1, median of 7
+interleaved runs. Every solver finds a valid solution to every puzzle, and every solver writes it out.}
+\label{tab:limit1}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
+\midrule
+17 clue & 49158 & \textbf{\num{1.70e-6}} & \num{2.74e-6} & \num{2.08e-6} & \num{2.76e-6} & \num{8.20e-6} \\
+&& (0.56) & (0.46) & (1.53) & (0.48) & (2.95) \\[2pt]
+magictour top 1465 & 1465 & \textbf{\num{4.40e-6}} & \num{5.42e-6} & \num{6.04e-6} & \num{7.71e-6} & \num{3.15e-5} \\
+&& (6.85) & (6.07) & (13.3) & (8.06) & (18.0) \\[2pt]
+forum hardest 1106 & 375 & \textbf{\num{2.87e-5}} & \num{3.91e-5} & \num{3.00e-5} & \num{7.42e-5} & \num{2.78e-4} \\
+&& (65.9) & (59.8) & (98.9) & (101) & (168) \\[2pt]
+forum hardest 1905 11+ & 48766 & \textbf{\num{2.05e-5}} & \num{2.42e-5} & \num{2.77e-5} & \num{4.52e-5} & \num{1.35e-4} \\
+&& (44.0) & (34.2) & (84.8) & (52.8) & (75.4) \\[2pt]
+kaggle & 100000 & \textbf{\num{8.63e-7}} & \num{9.23e-7} & \num{1.13e-6} & \num{1.51e-6} & \num{5.57e-6} \\
+&& (0) & (0) & (0) & (0) & (0) \\[2pt]
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{ARM compared with published x86 results.} Before measuring on x86 ourselves (\cref{sec:x86}), we
+compared with tdoku's repository, which publishes results for the same data sets on several x86 machines. \Cref{tab:published} compares its results for
+an Intel Core i7-1065G7 (a 2019 laptop processor with AVX-512, the machine our pull request compares against)
+with ours. Two patterns stand out. The scalar solvers run 1.3--1.7 times faster on the M4 Max than on the Intel
+processor, while tdoku runs 8--14\% slower. As a result tdoku's lead over JCZSolve, the scalar solver closest to ours,
+shrinks from 1.3--2.5 times on the Intel processor to 0.82--1.47 times on the M4. These comparisons need care: they
+are different machines, the published figures come from tdoku's own benchmark program (which times a random sample of
+each data set), and each published figure is the best over a dozen compiler configurations, including profile-guided
+optimization, while ours use one compiler. As a check on the harness, tdoku's own benchmark program on the M4 gives
+13{,}446 puzzles per second on the hardest set~\cite{kelly2026tdokuarm}, and our harness 13{,}755.
+
+\begin{table}[t]
+\centering
+\caption{The M4 Max against tdoku's published results for an Intel Core i7-1065G7 (best of all compiler configurations
+per cell). Left: how much faster tdoku is than JCZSolve on each machine. Middle: speed on the M4 divided by speed on the
+Intel processor. Right: FastBandSolver's measured speedup over tdoku on the M4, and a projection for the Intel
+processor assuming FastBandSolver gains from the M4 as JCZSolve does.}
+\label{tab:published}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{2}{c}{tdoku / JCZSolve} & \multicolumn{4}{c}{M4 speed / Intel speed} & \multicolumn{2}{c}{FastBandSolver / tdoku} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-7} \cmidrule(lr){8-9}
+data set & Intel & M4 & tdoku & JCZSolve & jsolve & kudoku & M4 & Intel (projected) \\
+\midrule
+kaggle & 2.07 & 1.27 & 0.91 & 1.49 & 1.38 & 1.30 & 1.07 & 0.66 \\
+17 clue & 1.33 & 0.82 & 0.92 & 1.49 & 1.70 & 1.54 & 1.62 & 1.00 \\
+magictour top 1465 & 1.89 & 1.21 & 0.86 & 1.34 & 1.51 & 1.42 & 1.20 & 0.77 \\
+forum hardest 1905 11+ & 2.01 & 1.20 & 0.88 & 1.47 & 1.48 & 1.42 & 1.17 & 0.70 \\
+forum hardest 1106 & 2.45 & 1.47 & 0.88 & 1.46 & 1.52 & 1.39 & 1.17 & 0.70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The last column shows what this implies. FastBandSolver's engine is JCZSolve's design with a smaller search tree, so
+its speed should depend on the processor much as JCZSolve's does. If it does, FastBandSolver would be about 0.7 times
+tdoku's speed on the hard sets on that Intel processor, and about even on 17-clue. The measurements of
+\cref{sec:x86} bear this out on Intel processors of the same and the following generation.
+
+\subsection{Measured on x86}
+\label{sec:x86}
+
+We ran \texttt{make sota} on x86 machines rented by the hour: GitHub's hosted runners, which are shared virtual
+machines, and Google Cloud spot virtual machines, each with 4 virtual CPUs (two cores with two hardware threads each).
+All ran Ubuntu, built every solver with clang and \texttt{-O3 -march=native}, and took the median of 5 interleaved
+runs. On every machine every solver solved every puzzle correctly, and FastBandSolver's tests passed. We did not choose
+the GitHub runners' processors: the four jobs of the run we report landed on three processor models. JCZSolve is left out, as in
+\texttt{make sota}. The raw output, and the script that builds these tables from it, are in \texttt{bench/results}.
+Rented virtual machines are noisier than a dedicated one, but the two jobs on the same processor model with different
+compilers agree to within 0.05 in every ratio, and repeated runs on one machine to within 0.01.
+
+\begin{table}[t]
+\centering
+\caption{FastBandSolver's speed relative to tdoku (tdoku's time divided by FastBandSolver's) on x86 machines,
+limit 2 except the last column, with the M4 Max for comparison; above 1, FastBandSolver is faster. The vector column
+gives the vector extensions available to tdoku's build. Each row is one run of \texttt{make sota} (median of 5
+interleaved runs); the two Zen~3 rows are GitHub jobs with different compilers. The second Zen~4 machine ran limit 2
+only.}
+\label{tab:x86}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{llrrrrrr}
+\toprule
+& & \multicolumn{5}{c}{limit 2} & limit 1 \\
+\cmidrule(lr){3-7} \cmidrule(lr){8-8}
+processor & vector & 17 clue & magictour & 1106 & 1905 & kaggle & 1106 \\
+\midrule
+Apple M4 Max & NEON & 1.62 & 1.20 & 1.17 & 1.17 & 1.07 & 1.36 \\
+\midrule
+AMD EPYC 7763 (Zen 3), clang 14 & AVX2 & 1.47 & 1.06 & 1.04 & 1.03 & 1.06 & 1.18 \\
+AMD EPYC 7763 (Zen 3), clang 18 & AVX2 & 1.42 & 1.03 & 1.01 & 1.00 & 1.04 & 1.15 \\
+AMD EPYC 9V74 (Zen 4) & AVX-512 & 1.30 & 0.96 & 0.94 & 0.93 & 0.93 & 1.08 \\
+AMD EPYC 9B14 (Zen 4) & AVX-512 & 1.30 & 0.95 & 0.93 & 0.92 & 0.94 & -- \\
+Intel Xeon 8370C (Ice Lake) & AVX-512 & 1.00 & 0.71 & 0.69 & 0.68 & 0.74 & 0.80 \\
+Intel Xeon (Ice Lake) & AVX-512 & 0.98 & 0.69 & 0.67 & 0.67 & 0.74 & 0.77 \\
+Intel Xeon 8481C (Sapphire Rapids) & AVX-512 & 1.05 & 0.73 & 0.71 & 0.70 & 0.80 & 0.82 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Seconds per puzzle on forum hardest 1106, limit 2, on the machines of \cref{tab:x86}. Clock speeds differ
+between the machines, so comparisons between rows are rough; \cref{tab:cycles} compares cycles instead.}
+\label{tab:x86times}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+processor & FastBandSolver & tdoku & jsolve & kudoku \\
+\midrule
+Apple M4 Max & \num{6.21e-5} & \num{7.27e-5} & \num{1.49e-4} & \num{5.62e-4} \\
+\midrule
+AMD EPYC 7763 (Zen 3), clang 14 & \num{9.57e-05} & \num{9.96e-05} & \num{2.40e-04} & \num{8.78e-04} \\
+AMD EPYC 7763 (Zen 3), clang 18 & \num{9.41e-05} & \num{9.46e-05} & \num{2.42e-04} & \num{8.37e-04} \\
+AMD EPYC 9V74 (Zen 4) & \num{7.78e-05} & \num{7.29e-05} & \num{2.04e-04} & \num{6.91e-04} \\
+AMD EPYC 9B14 (Zen 4) & \num{8.44e-05} & \num{7.88e-05} & \num{2.19e-04} & \num{7.42e-04} \\
+Intel Xeon 8370C (Ice Lake) & \num{1.01e-04} & \num{6.93e-05} & \num{2.68e-04} & \num{9.44e-04} \\
+Intel Xeon (Ice Lake) & \num{1.04e-04} & \num{6.96e-05} & \num{2.63e-04} & \num{9.33e-04} \\
+Intel Xeon 8481C (Sapphire Rapids) & \num{1.10e-04} & \num{7.76e-05} & \num{2.79e-04} & \num{1.02e-03} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:x86} gives the results, and the processor decides the outcome. On AMD's Zen~3, which has AVX2 but not
+AVX-512, FastBandSolver is level with tdoku on the hard sets at limit 2 (1.00--1.06$\times$), 1.15--1.18$\times$
+faster on the hardest set at limit 1, and 1.42--1.47$\times$ faster on 17-clue. On Zen~4 it is 4--8\% slower on the
+hard sets at limit 2, but still faster on 17-clue, and at limit 1 on the hardest set. On Intel's Ice Lake and Sapphire
+Rapids it runs at 0.67--0.73 times tdoku's speed on the hard sets and about level on 17-clue; the projection from
+published results above (0.70 on the hardest set) was close.
+
+\begin{table}[t]
+\centering
+\caption{tdoku with and without AVX-512 on the same machine: built with \texttt{-march=native} and with
+\texttt{-march=native -mno-avx512f}, limit 2, two rounds of each, alternating, averaged. The slowdown is tdoku's time
+without AVX-512 divided by its time with it, over the five data sets; the ratios are FastBandSolver's speed relative
+to tdoku on the three hard sets (magictour, 1106, 1905). FastBandSolver's own time changes by less than 3\%.}
+\label{tab:avx512}
+\small
+\begin{tabular}{lrrr}
+\toprule
+& tdoku slowdown & \multicolumn{2}{c}{FastBandSolver / tdoku} \\
+\cmidrule(lr){3-4}
+processor & without AVX-512 & with AVX-512 & without \\
+\midrule
+Intel Xeon 8481C (Sapphire Rapids) & 1.12--1.13 & 0.70--0.73 & 0.78--0.81 \\
+AMD EPYC 9B14 (Zen 4) & 1.06--1.07 & 0.92--0.95 & 0.96--0.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{How much is AVX-512?} tdoku never uses 512-bit registers. Its vectors are 128 and 256 bits wide, but when
+the compiler targets AVX-512 it uses newer instructions on those widths, such as three-input logic, comparisons into mask
+registers and vector bit counts. To measure what
+they are worth, we built tdoku with and without them on the same machine (\cref{tab:avx512}; an Ice Lake spot machine
+was reclaimed before it finished). Without AVX-512, tdoku is 12--13\% slower on Sapphire Rapids and 6--7\% slower on
+Zen~4. That is only part of the gap: without AVX-512, FastBandSolver still reaches only 0.78--0.81 times tdoku's speed
+on the hard sets on Sapphire Rapids, against 1.00--1.06 on Zen~3, which also lacks AVX-512. \Cref{sec:why} accounts for the rest.
+
+\subsection{Why: instructions and cycles}
+\label{sec:why}
+
+Time per puzzle is instructions per puzzle divided by instructions per cycle (IPC), divided by the clock speed. The
+clock differs from machine to machine and says nothing about the code, so we compare cycles. We measured them with
+\texttt{bench/counters.cpp}, which counts cycles, instructions, branches and branch mispredictions around the solve
+loop through Linux's \texttt{perf\_event\_open}, and with \texttt{bench/m4counters.cpp}, which counts the same events
+on the M4 through Apple's \texttt{kperf}.
+
+Most rented machines expose no hardware counters: of the types we tried, only Google Cloud's \texttt{c4} (Intel Emerald
+Rapids) does. Elsewhere we derive cycles and IPC from two facts. First, the harness estimates the clock before and
+after the solve loop by timing $2^{31}$ dependent register additions, each of which takes one cycle; cycles are time
+times clock. (An addition of a constant would not do: Intel cores since Golden Cove fold chains of those while
+renaming registers, which made our first version read about 20\,GHz.) On the \texttt{c4} the estimate (3.276\,GHz)
+agrees with the cycle counter (3.26--3.27\,GHz), and on the M4 with the cycles that \texttt{/usr/bin/time -l}
+reports (4.42\,GHz). Zen~3 runners on GitHub
+at 3.21\,GHz and on Google Cloud at 3.46\,GHz give the same cycles per puzzle to within 3\%, and Sapphire and Emerald
+Rapids, which share a core design, agree to within 1\%. Second, the same binary on the same puzzles retires the same
+instructions on any x86 processor, so instructions counted on the \texttt{c4} apply to all of them (three \texttt{c4}
+machines retired identical counts, 665{,}706 per puzzle for FastBandSolver). For this we build every solver a second
+time with \texttt{-march=x86-64-v3} (AVX2, no AVX-512): one binary, one instruction stream, on every x86 machine.
+
+\begin{table}[t]
+\centering
+\caption{Instructions per puzzle on forum hardest 1106, limit 2, for each build of each solver, and branch
+mispredictions per thousand instructions (MPKI). ARM counts are from the M4, x86 counts from the Emerald Rapids
+\texttt{c4}; the AVX2 build is the same binary on every x86 machine.}
+\label{tab:instructions}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+& \multicolumn{3}{c}{instructions per puzzle} & \multicolumn{2}{c}{MPKI} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-6}
+solver & ARM (NEON) & x86 AVX2 & x86 AVX-512 & M4 & x86 \\
+\midrule
+FastBandSolver & 594k & 692k & 666k & 10.1 & 9.6--10.0 \\
+tdoku & 768k & 460k & 401k & 1.9 & 4.2--4.8 \\
+jsolve & 1{,}520k & 1{,}641k & 1{,}637k & 10.8 & 10.9--11.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Cycles per puzzle and IPC on forum hardest 1106, limit 2. Left: the AVX2 build, the same instructions on every
+x86 machine (\cref{tab:instructions}). Right: the build for each machine (\texttt{-march=native}), which uses AVX-512
+where the processor has it. The ratio is tdoku's cycles over FastBandSolver's: above 1, FastBandSolver is faster. Each
+row averages every log for that processor (two rounds each); cycles are counted on the M4 and the \texttt{c4}
+(8581C) and derived from time and the measured clock elsewhere.}
+\label{tab:cycles}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{5}{c}{AVX2 build} & \multicolumn{3}{c}{native build} \\
+\cmidrule(lr){2-6} \cmidrule(lr){7-9}
+& \multicolumn{2}{c}{cycles} & \multicolumn{2}{c}{IPC} & & \multicolumn{2}{c}{cycles} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){7-8}
+processor & FastBand & tdoku & FastBand & tdoku & ratio & FastBand & tdoku & ratio \\
+\midrule
+Apple M4 Max & & & & & & 254k & 299k & 1.18 \\
+\midrule
+AMD EPYC 7B13 (Zen~3) & 314k & 305k & 2.20 & 1.51 & 0.97 & 300k & 304k & 1.01 \\
+AMD EPYC 7763 (Zen~3) & 322k & 306k & 2.15 & 1.51 & 0.95 & 301k & 304k & 1.01 \\
+AMD EPYC 9B14 (Zen~4) & 298k & 286k & 2.32 & 1.61 & 0.96 & 291k & 268k & 0.92 \\
+AMD EPYC 9V74 (Zen~4) & 309k & 285k & 2.24 & 1.61 & 0.92 & 290k & 276k & 0.95 \\
+AMD EPYC 9V45 (Zen~5) & 319k & 320k & 2.17 & 1.44 & 1.00 & 306k & 289k & 0.94 \\
+Intel Xeon (Ice Lake) & 352k & 268k & 1.96 & 1.72 & 0.76 & 347k & 235k & 0.68 \\
+Intel Xeon 8481C (Sapphire Rapids) & 328k & 262k & 2.11 & 1.76 & 0.80 & 325k & 230k & 0.71 \\
+Intel Xeon 8573C (Emerald Rapids) & 342k & 261k & 2.02 & 1.76 & 0.76 & 328k & 229k & 0.70 \\
+Intel Xeon 8581C (Emerald Rapids) & 330k & 259k & 2.10 & 1.77 & 0.79 & 327k & 229k & 0.70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:instructions,tab:cycles} separate three effects.
+
+\paragraph{Instructions depend on the instruction set, and tdoku's most of all.} tdoku retires 768 thousand
+instructions per puzzle on the M4, 1.67 times its 460 thousand with AVX2 and 1.91 times its 401 thousand with
+AVX-512: NEON has no 256-bit registers, so each of tdoku's 256-bit operations becomes two instructions, and some x86
+operations, such as extracting a bit mask from a vector, take several NEON instructions. FastBandSolver's scalar code
+goes the other way, 594 thousand instructions on ARM against 666--692 thousand on x86, as does jsolve's (1.52 million
+against 1.64 million). So on x86 tdoku needs 0.60--0.67 times FastBandSolver's instructions, and on the M4 1.29 times.
+This is where vector width matters.
+
+\paragraph{On the same instructions, Intel cores favour tdoku.} With the identical AVX2 binary, tdoku runs at an IPC of
+1.72--1.77 on the four Intel processors against 1.44--1.61 on the five AMD ones, while FastBandSolver runs at 1.96--2.11
+on Intel against 2.15--2.32 on AMD, and jsolve, the other scalar solver, shows the same pattern. FastBandSolver's IPC is
+higher than tdoku's everywhere, by 1.39--1.51 times on AMD, enough to cover tdoku's 1.50 times fewer instructions, and
+by only 1.14--1.20 times on Intel, which is not. On AMD the two take about the same cycles (ratio 0.92--1.00); on Intel
+tdoku takes 20--24\% fewer. We have not isolated which features of the Intel cores run tdoku's instruction stream
+faster per cycle; the counters say only that they do, and by how much.
+
+\paragraph{AVX-512 adds to tdoku's lead on Intel.} The native build removes 12\% of tdoku's cycles on all four Intel
+processors and 3--10\% on Zen~4 and Zen~5, and changes FastBandSolver's by at most 7\%. On Intel the ratio falls from
+0.76--0.80 to 0.68--0.71, the measured speed ratio of \cref{tab:x86}.
+
+\paragraph{Branch mispredictions.} FastBandSolver mispredicts 6{,}600 branches per puzzle on the hardest set on the
+\texttt{c4}, 3.4 times tdoku's 1{,}900, and 6{,}000 on the M4, 4.0 times tdoku's 1{,}500. The counts do not change
+between builds and are about the same on ARM and x86, so they are a property of the algorithms. They come from the
+propagation, not the search: sampling mispredictions on the \texttt{c4} (without precise sampling, which the virtual
+machine does not offer, so each sample lands just after its branch) puts 84\% of them in the update loop of
+\cref{alg:propagate} and 13\% in the search. An instrumented copy of the solver counts, per puzzle, how often the
+data-dependent branches there run and which way they go. The update loop asks 22{,}540 times whether a (digit, band)
+has changed since it was last checked; 15\% of the answers are yes. Each band update then asks whether the band's
+columns changed, so that the stack rule must run (3{,}225 times, yes 73\%), and whether a row became a single (3{,}225
+times, yes 45\%). Which bands change at each step depends on the puzzle and follows no pattern a predictor can learn:
+a predictor that always guessed the likelier way would miss about 7{,}400 times per puzzle over these and the smaller
+branches, close to the measured count. The test ``has this band changed?'' is also how FastBandSolver skips the 85\%
+of band updates that would change nothing, and so a source of its low instruction count; tdoku instead runs its vector
+operations over the grid without asking, and pays in instructions. The mispredictions are the price of the skipping,
+and they cannot simply be removed (\cref{sec:negative}). On x86 FastBandSolver's IPC is higher than tdoku's
+despite them. Memory plays no part: every solver misses the L1 data cache fewer than 6 times per puzzle, on both
+machines, against about 300 thousand cycles.
+
+\paragraph{The M4.} On the M4 FastBandSolver needs fewer instructions than tdoku, 0.77 times as many, at 0.91 times its
+IPC, and so fewer cycles: 254 thousand against 299 thousand, a ratio of 1.18, which is its measured lead. It is also the
+machine on which FastBandSolver takes the fewest cycles of all, 12--27\% fewer than its native build on any x86
+processor, while tdoku takes more cycles there than its native build on every x86 processor except Zen~3.
+
+\section{Using more than one core}
+\label{sec:multicore}
+
+Everything so far runs on one core, as tdoku's benchmark does. There are two different ways to use more. The first is
+\emph{throughput}: solving many puzzles at once, each core taking its own share. That is the natural setting for
+rating, generating or searching millions of puzzles, and it is fair to every solver, because every solver can be run
+that way unchanged. The second is \emph{latency}: solving one puzzle faster by splitting its search tree between cores.
+Only a solver built for it can do that, so a comparison with single-threaded solvers is no longer like for like, and we
+report it separately.
+
+\subsection{Throughput}
+
+We ran each solver as $N$ separate processes, each solving every $N$-th puzzle of a data set, so that each gets a similar
+mix of easy and hard puzzles, all starting at the same moment; throughput is the number of puzzles solved divided by the time until the last process finishes (median of three
+runs). Processes rather than threads, because tdoku and jsolve keep their state in global variables and cannot run
+twice in one process. The M4 Max has 10 performance cores and 4 efficiency cores. \Cref{tab:throughput} gives the
+results; \texttt{make throughput} reproduces them.
+
+\begin{table}[t]
+\centering
+\caption{Throughput in thousands of puzzles per second, limit 2, with $N$ processes, each solving every $N$-th puzzle of the data set (median of 3 runs). The last column is FastBandSolver's throughput over tdoku's.}
+\label{tab:throughput}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & $N$ & FastBandSolver & tdoku & jsolve & kudoku & ratio \\
+\midrule
+forum hardest 1106 & 1 & \textbf{15} & 13 & 7 & 2 & 1.19 \\
+ & 4 & \textbf{60} & 51 & 24 & 6 & 1.17 \\
+ & 10 & \textbf{150} & 133 & 56 & 15 & 1.13 \\
+ & 14 & \textbf{149} & 131 & 54 & 16 & 1.13 \\
+\midrule
+forum hardest 1905 11+ & 1 & \textbf{24} & 21 & 11 & 4 & 1.17 \\
+ & 4 & \textbf{97} & 83 & 43 & 14 & 1.18 \\
+ & 10 & \textbf{236} & 200 & 104 & 34 & 1.18 \\
+ & 14 & \textbf{236} & 218 & 110 & 38 & 1.08 \\
+\midrule
+magictour top 1465 & 1 & \textbf{140} & 121 & 76 & 15 & 1.16 \\
+ & 4 & \textbf{565} & 474 & 291 & 59 & 1.19 \\
+ & 10 & \textbf{1{,}572} & 1{,}382 & 758 & 132 & 1.14 \\
+ & 14 & \textbf{1{,}539} & 1{,}312 & 721 & 147 & 1.17 \\
+\midrule
+17 clue & 1 & \textbf{536} & 334 & 325 & 66 & 1.61 \\
+ & 4 & \textbf{2{,}051} & 1{,}281 & 1{,}208 & 250 & 1.60 \\
+ & 10 & \textbf{4{,}916} & 3{,}157 & 2{,}902 & 598 & 1.56 \\
+ & 14 & \textbf{5{,}116} & 3{,}374 & 2{,}974 & 664 & 1.52 \\
+\midrule
+kaggle & 1 & \textbf{1{,}149} & 1{,}065 & 641 & 132 & 1.08 \\
+ & 4 & \textbf{4{,}534} & 4{,}176 & 2{,}521 & 517 & 1.09 \\
+ & 10 & \textbf{11{,}289} & 10{,}184 & 6{,}243 & 1{,}264 & 1.11 \\
+ & 14 & \textbf{11{,}428} & 10{,}445 & 6{,}275 & 1{,}225 & 1.09 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+FastBandSolver has the highest throughput at every number of processes on every data set; its lead over tdoku ranges from $1.08\times$ (kaggle) to $1.61\times$ (17-clue), and on the hardest set it stays between
+$1.13\times$ and $1.19\times$ at every number of processes. Scaling is close to linear up to the 10 performance cores: from one process to ten, throughput on the second forum set
+grows $9.8\times$ for FastBandSolver and $9.7\times$ for tdoku. Beyond ten, the four efficiency cores add little and the
+results get noisier. A first version gave each process a contiguous block of puzzles instead; hard puzzles cluster in
+the files, so some processes had much more work than others, and FastBandSolver's lead on the hardest set appeared to
+fall to $1.03\times$ at 10 processes. The throughput comparison inherits the platform question of \cref{sec:x86}: we measured it only on the M4, and on
+the Intel processors, where FastBandSolver is behind tdoku on one core, it would presumably be behind on many cores too. In a local run, JCZSolve trailed
+both solvers at every process count, as it does on one core.
+
+\begin{table}[t]
+\centering
+\caption{Throughput at limit 1 (one solution, written out), in thousands of puzzles per second, as in
+\cref{tab:throughput}.}
+\label{tab:throughput1}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+data set & $N$ & FastBandSolver & tdoku & jsolve & kudoku & ratio \\
+\midrule
+forum hardest 1106 & 1 & \textbf{35} & 26 & 14 & 4 & 1.35 \\
+ & 4 & \textbf{132} & 100 & 48 & 12 & 1.32 \\
+ & 10 & \textbf{313} & 257 & 109 & 25 & 1.22 \\
+ & 14 & \textbf{366} & 271 & 101 & 28 & 1.35 \\
+\midrule
+forum hardest 1905 11+ & 1 & \textbf{48} & 40 & 21 & 7 & 1.19 \\
+ & 4 & \textbf{184} & 156 & 82 & 28 & 1.18 \\
+ & 10 & \textbf{448} & 380 & 203 & 67 & 1.18 \\
+ & 14 & \textbf{523} & 453 & 240 & 80 & 1.16 \\
+\midrule
+magictour top 1465 & 1 & \textbf{226} & 189 & 127 & 31 & 1.20 \\
+ & 4 & \textbf{953} & 833 & 511 & 117 & 1.14 \\
+ & 10 & \textbf{2{,}622} & 2{,}043 & 1{,}312 & 263 & 1.28 \\
+ & 14 & \textbf{3{,}052} & 2{,}414 & 1{,}613 & 299 & 1.26 \\
+\midrule
+17 clue & 1 & \textbf{578} & 354 & 356 & 118 & 1.63 \\
+ & 4 & \textbf{2{,}173} & 1{,}343 & 1{,}305 & 440 & 1.62 \\
+ & 10 & \textbf{5{,}243} & 3{,}328 & 3{,}154 & 1{,}043 & 1.58 \\
+ & 14 & \textbf{6{,}092} & 3{,}816 & 3{,}577 & 1{,}239 & 1.60 \\
+\midrule
+kaggle & 1 & \textbf{1{,}173} & 1{,}061 & 650 & 175 & 1.10 \\
+ & 4 & \textbf{4{,}602} & 4{,}152 & 2{,}536 & 681 & 1.11 \\
+ & 10 & \textbf{11{,}425} & 10{,}326 & 6{,}303 & 1{,}680 & 1.11 \\
+ & 14 & \textbf{12{,}570} & 11{,}374 & 7{,}125 & 1{,}951 & 1.11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At limit 1 (\cref{tab:throughput1}, \texttt{make throughput LIMIT=1}) FastBandSolver again has the highest throughput at
+every number of processes on every data set, by $1.10\times$ to $1.63\times$ over tdoku.
+
+
+\subsection{The search tree allows a lot of parallelism}
+
+With a limit of 2 on a puzzle with one solution, the whole tree must be explored, and its branches are independent.
+Before writing any parallel code we measured how much this allows. We recorded each puzzle's search tree, with the work
+of each node (band updates, the dominant cost), and computed two bounds.
+\begin{itemize}
+\item The \emph{critical path}, the most work along any single path from the root to a leaf, cannot be split: it limits
+  the speedup however many cores are used. On the hardest set it is only 3.5\% of the total work (5.5\% on the second
+  forum set), so with ideal splitting 14 cores could give $13.98\times$ ($13.6\times$). The trees are almost entirely
+  parallel work. On magictour, whose trees are small, the ceiling is $3.5\times$.
+\item Splitting at a fixed depth, handing each subtree below it to a core, does much worse, at best $4.5\times$ on the
+  hardest set and $3.7\times$ on the second forum set, because the subtrees are very unequal: good use of many cores
+  needs branches to be handed out as the search goes.
+\end{itemize}
+
+The obstacle is size. A node takes about \SI{2e-7}{\second} on average, so moving work between cores has to cost less than that,
+or be limited to branches large enough to be worth it.
+
+\subsection{ParallelBandSolver}
+
+\texttt{parallelbandsolver.hpp} runs FastBandSolver's search on several threads, with the same interface. The calling
+thread searches as before. At a two-candidate branch it may put the second branch, a copy of the 246-byte state, on a
+shared queue instead of exploring it later itself; idle worker threads take branches from the queue and search them the
+same way, handing out branches in turn. A shared counter stops every thread once the limit is reached. Four details,
+each found by measurement on a prototype, make it faster than one thread rather than slower:
+\begin{itemize}
+\item \textbf{No sleeping on the queue.} With an ordinary mutex, every idle thread tried to take a new branch at once, and
+  under that contention the operating system put threads to sleep, which costs more than a whole puzzle: with 8 threads
+  the hardest set took \SI{1.77e-4}{\second} per puzzle instead of \SI{5.6e-5}{\second}. A try-lock, where a thread that finds the queue busy keeps
+  spinning, together with the depth limit below, brought 4 threads to \SI{2.5e-5}{\second}.
+\item \textbf{Only near the top.} Branches are handed out only while fewer than 8 guesses deep, where subtrees are large.
+\item \textbf{Only for hard puzzles.} A puzzle is searched by the calling thread alone until it has taken 16 nodes, so
+  easy puzzles never involve the other threads.
+\item \textbf{Workers sleep between hard puzzles.} Spinning idle threads lowered the clock speed of the working one:
+  kaggle puzzles, which never share a branch, ran up to 12\% slower. Workers now spin only while a puzzle is being shared,
+  and sleep after a short grace period.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\caption{Latency: time per puzzle in seconds, limit 2, one puzzle at a time, median of 5 runs. tdoku and
+FastBandSolver use one thread; ParallelBandSolver uses the number of threads shown, with one pool of threads alive at a time (in a first run with four pools alive at once, whose idle workers interfered,
+4 threads took \SI{4.09e-5}{\second} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
+comparison with tdoku, which uses one core.}
+\label{tab:latency}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
+\cmidrule(lr){4-7}
+data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
+\midrule
+17 clue & \num{2.98e-6} & \num{1.85e-6} & \num{1.88e-6} & \num{1.91e-6} & \num{1.90e-6} & \num{2.00e-6} \\
+magictour top 1465 & \num{8.20e-6} & \num{6.97e-6} & \num{6.44e-6} & \textbf{\num{6.29e-6}} & \num{6.34e-6} & \num{9.06e-6} \\
+forum hardest 1106 & \num{7.37e-5} & \num{6.27e-5} & \num{4.09e-5} & \num{3.30e-5} & \textbf{\num{2.95e-5}} & \num{6.37e-5} \\
+forum hardest 1905 11+ & \num{4.80e-5} & \num{4.13e-5} & \num{2.80e-5} & \num{2.53e-5} & \textbf{\num{2.44e-5}} & \num{4.57e-5} \\
+kaggle & \num{9.51e-7} & \num{8.71e-7} & \num{8.70e-7} & \num{8.74e-7} & \num{8.72e-7} & \num{8.72e-7} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:latency} gives the results; \texttt{make parallel} reproduces them. With 4 threads, the hardest set takes
+\SI{2.95e-5}{\second} per puzzle instead of \SI{6.27e-5}{\second} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's \SI{7.37e-5}{\second}), and the
+second forum set \SI{2.44e-5}{\second} instead of \SI{4.13e-5}{\second} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
+
+\begin{table}[t]
+\centering
+\caption{Latency at limit 1 (one solution, written out): time per puzzle in seconds, median of 5 runs, as in
+\cref{tab:latency}.}
+\label{tab:latency1}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & & & \multicolumn{4}{c}{ParallelBandSolver, threads} \\
+\cmidrule(lr){4-7}
+data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
+\midrule
+17 clue & \num{2.75e-6} & \num{1.69e-6} & \num{1.72e-6} & \num{1.74e-6} & \num{1.73e-6} & \num{1.81e-6} \\
+magictour top 1465 & \num{5.30e-6} & \num{4.42e-6} & \textbf{\num{4.21e-6}} & \num{4.30e-6} & \num{4.42e-6} & \num{6.13e-6} \\
+forum hardest 1106 & \num{3.86e-5} & \num{2.89e-5} & \num{2.00e-5} & \num{1.74e-5} & \textbf{\num{1.65e-5}} & \num{4.00e-5} \\
+forum hardest 1905 11+ & \num{2.44e-5} & \num{2.06e-5} & \num{1.49e-5} & \textbf{\num{1.34e-5}} & \num{1.34e-5} & \num{3.10e-5} \\
+kaggle & \num{9.36e-7} & \num{8.71e-7} & \num{8.61e-7} & \num{8.65e-7} & \num{8.61e-7} & \num{8.58e-7} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At limit 1 (\cref{tab:latency1}, \texttt{make parallel LIMIT=1}) the pattern is the same: 4 threads take the hardest set
+from \SI{2.89e-5}{\second} to \SI{1.65e-5}{\second} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
+\SI{1.34e-5}{\second} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
+at the first solution, so there is less of the tree to share.
+The easy sets are not helped: kaggle is unchanged, since its puzzles never reach the sharing threshold, and 17-clue is
+about 3\% slower. Beyond 4 threads the times get worse again. Our explanation, which we could not test directly, is that
+the performance cores sit in two clusters, and passing work between clusters costs more than a small subtree is worth;
+macOS does not let a program choose which cores its threads run on.
+
+The gap to the ceiling of the previous subsection is large: about $2\times$ against a theoretical $14\times$. Closing it
+would take cheaper hand-offs than a shared queue (for example a queue per thread, from which idle threads steal), and
+control over where threads run. It remains a latency result for hard puzzles only.
+
+\paragraph{Correctness.} The parallel search explores the same tree as FastBandSolver, divided between threads: until the limit is reached,
+each branch is searched exactly once, by whichever thread holds it; after that, branches still waiting return without
+work, as the serial search stops early too. The proof of \cref{thm:correct} therefore carries over, with two changes. The shared counter can overshoot the limit when two threads find solutions at the same time, so the
+count returned is the minimum of the counter and the limit. The first solution is copied out by the thread whose increment takes the counter from 0 to 1. Each thread has its own
+array of 82 states, and a branch taken from the queue starts at the bottom of it with no more unsolved cells than the
+state it was copied from, so \cref{lem:termination}'s bound holds per thread. The guess count is summed over the
+branches actually explored, so once the limit is reached it can be lower than FastBandSolver's. We checked the solution counts at limits 1, 2 and 3, and every solution, on
+all seven of tdoku's data sets with 2, 4 and 8 threads; again with sharing forced from the first node, which makes the
+puzzles with several solutions share branches; and ran the repository's tests, including ThreadSanitizer, which reported
+no data races.
+
+\section{What did not work}
+\label{sec:negative}
+
+We tried six other directions before the design above. Each was measured on the hardest set against tdoku's
+\SI{7.5e-5}{\second} and 110 guesses; we report them because each is a natural idea and none paid off here.
+
+\paragraph{Template search.} The template or pattern-overlay method~\cite{stuart2008pom} treats each digit's placements as one
+of 46{,}656 templates.\footnote{Count them band by band. In the first band, choose which box each row uses (6 ways)
+and a column within each box ($3^3$ ways): 162. In the second band, again 6 row-to-box pairings, but in each box the
+column must differ from the first band's column in that stack: $6\cdot 2^3=48$. In the third band the columns are then
+forced, leaving the 6 pairings. $162\cdot 48\cdot 6 = 46{,}656 = 6^6$.} complete per-digit inference means keeping only templates consistent with the candidates. After
+band propagation, a hard puzzle has a median of 491 templates over all nine digits (90th percentile 787), few enough
+to filter as 128-bit masks. But even removing every template that conflicts with the
+candidates (generalized arc consistency), adding a rule that every cell must be covered by some digit's remaining
+templates, and branching on cells, still makes 98 decisions per puzzle, and adding pairwise digit consistency gives 81: little
+better than tdoku's 110, at a much higher cost per node. The forum-hardest puzzles are selected to resist single-digit techniques, and complete single-digit inference does not
+collapse their trees. Eppstein~\cite{eppstein2012single} solves these single-digit subproblems asymptotically faster
+than the pattern overlay method and shows that single-digit deduction is NP-hard in general.
+
+\paragraph{Search-tree nodes in SIMD lanes.} With a limit of 2 on a puzzle with one solution, the whole tree must be
+searched, so the order of nodes does not matter and several nodes can be propagated at once. We wrote a branch-free
+propagation round that runs one board per 32-bit lane of NEON registers, and verified it inside a one-board search
+against tdoku on all five sets; we did not build the scheduler that keeps the lanes full. One round costs \SI{7.4e-8}{\second} per
+board with 4 lanes (3{,}344 instructions per round for 4 boards, IPC 2.8), \SI{6.2e-8}{\second} with 8 and \SI{5e-8}{\second} with 16, and a
+node needs 3.9 rounds to reach a fixed point; capping the rounds grows the tree faster than it saves work (1{,}340
+board-rounds per puzzle at two rounds per node vs.\ 1{,}119 at the fixed point). That projects to \SIrange{2.4e-7}{2.9e-7}{\second} per
+node with 4--8 lanes, above the roughly \SI{2.2e-7}{\second} per node of JCZSolve's incremental engine under the same peer-count
+branching, and \SI{1.95e-7}{\second} with 16 lanes, near parity before any scheduling cost. We stopped there: a frontier of 16 nodes
+cannot be kept full over most of a tree of a few hundred nodes. Two things are missing: NEON has no gather, so the $3\times 3$ matching takes about 40 bit
+operations instead of one lookup in a 512-entry table, and full rounds recompute all 27 (digit, band) masks where an
+incremental engine touches only the changed ones.
+
+\paragraph{Interleaving sibling branches on one core.} FastBandSolver runs at about 2.4 instructions per cycle, well
+below what the core can issue, mostly because of hard-to-predict branches. We tried propagating both children of each
+two-way guess in one interleaved loop, so that the processor could overlap two independent streams of work, before
+searching them in turn: the same work in a different order. It was about 3\% slower on the hard sets, with identical
+results; the extra bookkeeping cost more than the overlap gained.
+
+\paragraph{Lookahead.} Probing both children of the best-scored two-candidate cells before branching, and taking a
+failed probe as a free deduction, shrinks the tree fourfold: with JCZSolve's engine and 2 probed cells per node the
+guesses fall from 199 to 49 on the hardest set. The time rises from \SI{8.7e-5}{\second} to \SI{1.02e-4}{\second}, and probing only near the root, at
+any threshold we tried, was never faster than not probing. In a slower reference solver the tree fell further (18
+guesses with 64 probed cells), but at 1{,}282 probes per puzzle. This probing is what Simonis calls
+\emph{shaving}~\cite{simonis2005sudoku}, which he found a strong filter in constraint models; our result is that in a
+fast band solver it costs more than it saves.
+
+\paragraph{Richer rules and branching.} Triad rules for horizontal and vertical triads (a triad whose cells admit exactly
+three digits must hold all three, and three digits forced into a triad exclude the others) reduced the tree by
+6--10\%, not enough to pay for themselves. Scoring bivalue cells and bilocations (a digit with two places left in a
+unit) by the candidates they touch reduced the tree by another 18\% in the reference solver (121 vs.\ 148 guesses),
+but computing the score cost about \SI{9e-7}{\second} per branch node in a band solver, more than it saved. Scoring by the peer
+candidates of the cell's two digits saves 1.5\% of guesses and costs 17\% of time. Branching on band configurations
+as tdoku does was worse than peer-count branching with our rules (169 vs.\ 142 guesses).
+
+\paragraph{Band decomposition.} A solution is three band fillings whose columns use disjoint digits, so solutions can
+be counted by joining lists of band fillings, as in the enumeration of grids~\cite{felgenhauer2006mathematics}. After
+propagation, however, the band with the fewest fillings still has a median of 888 of them on the hardest set (2{,}054
+for the middle band), so the join alone is millions of pairs.
+
+\paragraph{Fewer mispredicted branches.} After the design above, we tried to remove the branches behind its
+mispredictions (\cref{sec:why}), each change timed against the unchanged solver in 7 alternating runs per data set on
+the M4, with identical guess counts and, where the change touched the propagation, the full check of
+\cref{sec:pitfalls}. Placing row singles without first testing whether any row is new (the step then does nothing when
+none is): 0.998--1.005 times the original time over the five sets. Running the stack rule on every band update instead
+of only when the columns change: 0.997--1.003. Collecting the changed (digit, band) pairs into a bit mask once per pass
+and visiting only those, instead of testing all 27: 0.999--1.003. Choosing the best two-candidate cell without a
+branch: 0.999--1.004. Each removes mispredictions but adds back as much, in work that the branch used to skip or in new
+branches; the code is at a balance point. Profile-guided optimization, which lets the compiler lay out branches from a
+recorded run, changed the hard sets by $+$0.2--0.5\% and saved 1--2\% on 17-clue and kaggle, too little to be
+worth a compiler-specific build.
+
+\section{Discussion}
+
+The result depends on the machine (\cref{tab:x86}), and the counters of \cref{sec:why} say why. FastBandSolver
+always makes more guesses than tdoku, and on x86 always runs at a higher IPC; which one wins depends on how many
+instructions each needs and how fast the core runs each kind of code. On the M4, tdoku's 256-bit operations become
+pairs of 128-bit NEON instructions, so it needs 1.29 times FastBandSolver's instructions, and FastBandSolver wins. On
+x86 tdoku needs only 0.60--0.67 times FastBandSolver's instructions; AMD's cores run FastBandSolver's code about 1.4--1.5
+times as fast per cycle as tdoku's, which makes the two level, while Intel's run tdoku's code relatively faster, and
+AVX-512 cuts its instructions further. All three solvers in \cref{tab:counters} run at an IPC between 2.1 and 2.6 on
+the hardest set on the M4, and their times follow their instruction counts and tree sizes: there, cheap choices of where to branch pay
+off more than stronger propagation.
+
+\paragraph{Limitations.} The M4 measurements are from one machine and one compiler. The x86 measurements are from
+rented virtual machines, and we measured neither throughput nor ParallelBandSolver there. Hardware counters were
+available on one x86 machine type; elsewhere cycles come from time and a measured clock, validated where both were
+available (\cref{sec:why}). They include no x86 desktop or laptop processor, and we did not isolate which features
+of the Intel cores run tdoku's code faster per cycle. The data sets are those of tdoku's benchmark, and the
+forum-hardest sets are selected for difficulty under human techniques, not under search. Guess counts are not directly
+comparable across solvers that branch on different objects, which is why we compare times.
+
+\section{Conclusion}
+
+A scalar band solver with a matching-based stack rule, peer-count branching and a fewest-candidates fallback is faster
+than tdoku on all of tdoku's standard data sets on Apple Silicon, by 1.07--1.62$\times$ when checking uniqueness and by
+1.07--1.61$\times$ when finding one solution. Branching carries most of the gain. The advantage depends on the
+processor: on AMD's Zen~3 FastBandSolver is level with tdoku on the hard sets and faster elsewhere, on Zen~4 it is
+slightly slower on the hard sets, and on recent Intel processors it runs at about 0.7 times tdoku's speed, as a
+projection from tdoku's published results predicted. Counting instructions and cycles explains the pattern: tdoku's
+vector code needs far fewer instructions on x86 than on ARM, Intel's cores run it faster per cycle than AMD's, and
+AVX-512 adds 12\% on Intel. On many cores it keeps the highest throughput on the M4, and splitting one puzzle's search between 4
+threads halves the time of the hardest puzzles, far below what the trees would allow, because moving work between
+cores costs about as much as the work. The code and the benchmark are in the repository, \texttt{make sota}
+reproduces \cref{tab:sota}, and \texttt{bench/results} holds the x86 runs.
+
+\paragraph{Acknowledgments.} FastBandSolver's representation follows zhouyundong's band solver and its implementations
+in JCZSolve and rust\_sudoku; the benchmark harness and data sets are Tom Dillon's. This work was done depending heavily on Anthropic's LLM harness Claude (Claude Code), using the model Claude Opus~5.5 with occasional advisory support from Claude Fable, including in theorizing, experimentation, and writeup.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

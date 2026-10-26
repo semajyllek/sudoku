@@ -1,0 +1,12 @@
+\paragraph{Why one word per band, not one per row.} Storing each row in its own 9-bit integer, as
+$\mathit{valueToBand}[d-1][b][r]$, would read more simply: a row would be a plain array element, with no shift or mask. It
+would not be faster. Taking one row out of the packed word, $(M\gg 9)\,\&\,511$, costs one or two instructions (one on
+ARM, which has a bitfield-extract instruction), about the same as loading a separate row from memory, and the shifts in
+$P(M)$ are folded into the ORs. Most of the solver's work, though, is on a whole band at once: the band rule's AND with
+\textsc{PossibleCells}, the test for an empty mask, the check whether a mask has changed, the stack rule's AND with
+$\mathrm{cols}(\mathit{keptColumns}_b)$, the updates when a digit is placed, and the candidate counters of \cref{alg:propagate}, which
+handle all 27 cells of a band in each instruction. Each of these is one instruction on a 27-bit word and would be three
+on separate rows. Every guess also copies the whole state, and with 16-bit rows \texttt{valueToBand} and \texttt{checked}
+would each grow from 108 to 162 bytes. The packed word makes the occasional per-row read slightly less direct so that
+every per-band operation is a single instruction.
+

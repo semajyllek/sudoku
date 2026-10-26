@@ -1,0 +1,22 @@
+\begin{lemma}[invariants]
+\label{lem:invariants}
+After \textsc{Load} succeeds, the following hold at every point of the solve.
+\begin{enumerate}
+\item[(I1)] A cell not in $U$ has at most one candidate.
+\item[(I2)] For each mask, once \textsc{UpdateBand} has run on it, $M_{d,b}\subseteq K_{d,b}$; before that,
+  $K_{d,b}=0$.
+\item[(I3)] If the bit of row $R$ in $O_d$ is clear, then $d$ has at most one candidate cell in row $R$, and that cell
+  has no other candidate.
+\end{enumerate}
+\end{lemma}
+\begin{proof}
+(I1) Cells leave $U$ only in \textsc{Place}, in a row-single placement and in a naked-single placement. \textsc{Place}
+removes every other digit from the cell, a row-single placement clears the cell from all nine digits and then restores $d$'s mask as it was just before, so
+the cell keeps at most $d$, and a naked single already has one candidate. By monotonicity the cell never gains candidates.
+(I2) \textsc{UpdateBand} sets $K_{d,b}$ to the current mask; afterwards the mask only shrinks and $K_{d,b}$ changes only
+at the next \textsc{UpdateBand} on the same mask. (I3) Row bits of $O_d$ are cleared by the same three placements, each
+of which leaves the placed cell $y$ with no candidate other than $d$ and removes $d$ from the rest of $y$'s row: a row
+single because the row had no other candidate, \textsc{Place} and a naked-single placement through
+\textsc{AfterPlacing}. Monotonicity preserves both properties.
+\end{proof}
+

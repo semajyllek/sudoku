@@ -20,6 +20,11 @@
 \theoremstyle{definition}
 \newtheorem{definition}[theorem]{Definition}
 \theoremstyle{plain}
+% the environments share one counter, so tell cleveref which name to print for each (otherwise every one is "Theorem")
+\AddToHook{env/lemma/begin}{\crefalias{theorem}{lemma}}
+\AddToHook{env/proposition/begin}{\crefalias{theorem}{proposition}}
+\AddToHook{env/corollary/begin}{\crefalias{theorem}{corollary}}
+\AddToHook{env/definition/begin}{\crefalias{theorem}{definition}}
 
 \sisetup{detect-all, exponent-product=\times}
 \let\origtextsc\textsc
@@ -92,7 +97,7 @@ perfect matchings. Our contributions:
   of bands to columns, and pruning edges that lie on no perfect matching subsumes locked candidates. The constraint
   is Simonis's~\cite{simonis2005sudoku}; our contribution is applying it with one table lookup inside a band solver,
   only when a band's columns change. Together with the band rule, it makes box and column hidden singles redundant
-  (\cref{prop:hidden}).
+  in any state that has a solution (\cref{prop:hidden}).
 \item \textbf{Measurements on x86} (\cref{sec:x86}): on seven cloud machines FastBandSolver is level with or
   faster than tdoku on AMD Zen~3, slightly slower on Zen~4 and about 0.7 times its speed on recent Intel processors,
   and hardware counters and cycle measurements on ten processors separate the instruction set, the core and
@@ -127,8 +132,9 @@ that share a row, column or box with it; a cell's digit can never appear in any 
 Two larger structures matter in this paper. A \emph{band} is a horizontal strip of three boxes: rows 1--3, 4--6 or
 7--9, 27 cells in all. A \emph{stack} is a vertical strip of three boxes: columns 1--3, 4--6 or 7--9. There are three
 bands and three stacks, and each box is where one band and one stack cross. Within a band, the three cells where a row
-crosses a box form a \emph{mini-row}, so each band has nine mini-rows; within a stack, the three cells where a column
-crosses a box form a \emph{mini-column}. Mini-rows and mini-columns are what tdoku's author calls \emph{triads}. When
+crosses a box form a \emph{horizontal triad}, so each band has nine of them; within a stack, the three cells where a
+column crosses a box form a \emph{vertical triad}. The term is tdoku's~\cite{dillon2019nerdsniped}. The band rule only
+uses horizontal triads, so from here on a \emph{triad} without a direction is a horizontal one. When
 we look inside a single band we number its rows and its boxes 0--2 and its columns 0--8.
 
 \begin{figure}[t]
@@ -137,16 +143,16 @@ we look inside a single band we number its rows and its boxes 0--2 and its colum
   \fill[blue!12] (0,3) rectangle (9,6);          % a band (the middle one)
   \fill[orange!20] (6,0) rectangle (9,9);        % a stack (the right one)
   \fill[orange!20!blue!18] (6,3) rectangle (9,6);% their shared box
-  \fill[red!35] (3,4) rectangle (6,5);           % a mini-row
+  \fill[red!35] (3,4) rectangle (6,5);           % a triad
   \draw[step=1,gray!60,very thin] (0,0) grid (9,9);
   \draw[very thick] (0,0) rectangle (9,9);
   \foreach \x in {3,6} { \draw[thick] (\x,0) -- (\x,9); \draw[thick] (0,\x) -- (9,\x); }
   \node[right] at (9.4,4.5) {\small band (rows 4--6)};
   \node[above] at (7.5,9.1) {\small stack (columns 7--9)};
-  \draw[->] (-0.6,4.5) node[left] {\small a mini-row} -- (2.9,4.5);
+  \draw[->] (-0.6,4.5) node[left] {\small a triad} -- (2.9,4.5);
 \end{tikzpicture}
 \caption{The parts of a Sudoku grid used in this paper. The shaded horizontal strip is a band, the shaded vertical
-strip is a stack, and their overlap is a box. The dark cells are a mini-row: the three cells where a row of the band
+strip is a stack, and their overlap is a box. The dark cells are a triad: the three cells where a row of the band
 crosses one of its boxes.}
 \label{fig:grid}
 \end{figure}
@@ -200,10 +206,11 @@ instructions: intersection is bitwise AND ($\&$), union is OR ($\mid$), removing
 \emph{popcount} instruction counts the 1-bits, which is the size of the set. For example, the set $\{0, 2, 3\}$ is the
 bitmask $1101_2 = 13$, and ANDing it with $\{2,3,4\} = 11100_2$ gives $\{2,3\} = 1100_2$ in one instruction.
 
-We write bitmasks in \emph{octal} (base 8), marked with a subscript 8, because one octal digit is exactly three bits,
-and Sudoku is built from threes. For example $7_8 = 111_2$ is three 1-bits, $777_8 = 111\,111\,111_2 = 511$ is nine,
-the mask of all nine columns of one row, and $410005022_8$ is a 27-bit mask whose nine octal digits are the nine
-mini-rows of a band (\cref{sec:state}).
+We write bitmasks in binary with the bits in groups of three, because Sudoku is built from threes, and the code
+does the same with C++14 binary literals such as \texttt{0b111'111'111}. For example $111_2 = 7$ is three 1-bits,
+$111\,111\,111_2 = 511$ is nine, the mask of all nine columns of one row, and
+$100\,001\,000\;\;000\,000\,101\;\;000\,010\,010_2$ is a 27-bit mask whose nine groups are the nine triads of a band, with a wider gap
+between rows (\cref{sec:state}).
 
 A \emph{lookup table} is a precomputed array: instead of computing a function of a small input at run time, the solver
 reads the answer from memory, indexed by the input. A 9-bit input has only $2^9 = 512$ possible values, so any function
@@ -223,93 +230,17 @@ instructions; a \emph{scalar} solver uses ordinary 32- or 64-bit integers.
 
 \subsection{Bipartite graphs and matchings}
 
-The rules at the heart of this paper come from a basic idea in graph theory. We first state it in general, then show
-how a band of a Sudoku becomes one of these graphs.
-
-\paragraph{The general idea.} A \emph{bipartite graph} has two separate sets of vertices, and edges that each join a
-vertex of the first set to a vertex of the second; no edge joins two vertices of the same set. A familiar example is
-three students and three projects, with an edge when a student is willing to work on a project. A \emph{matching} is a
-set of edges no two of which share a vertex: no student gets two projects and no project gets two students. A
-\emph{perfect matching} uses every vertex exactly once, so every student gets exactly one project and every project
-exactly one student; with three vertices on each side it is a one-to-one pairing of the two sets. There are $3!=6$
-possible pairings, and a perfect matching is one of them that uses only existing edges. An edge \emph{lies on a
-perfect matching} when at least one perfect matching includes it. An edge that lies on no perfect matching can never
-be part of a complete assignment, however the rest is chosen, so it can be deleted.
-
-A small bipartite graph can be written as a table of 0s and 1s, its \emph{biadjacency matrix} $A$: one row of the table
-for each vertex of the first set, one column for each vertex of the second, and $A_{ij}=1$ when vertex $i$ of the first
-set and vertex $j$ of the second are joined. (``Bi'' because rows and columns are indexed by the two different sets,
-unlike an ordinary adjacency matrix.) In the table, a perfect matching is a choice of three 1-entries with exactly one
-in each row and one in each column of the table, the pattern of a \emph{permutation matrix}. For a $3\times 3$ table
-the whole graph is 9 bits, so there are only $2^9=512$ possible graphs, and for each of them we can precompute which
-edges lie on a perfect matching. That precomputed table is what the solver looks up.
-
-\paragraph{From a band to a bipartite graph.} Fix one digit, say 5, and one band. The rules of Sudoku say that in the
-finished grid 5 appears exactly once in each of the band's three rows, and exactly once in each of its three boxes.
-Build the bipartite graph whose first set is the band's three rows and whose second set is its three boxes, with an
-edge from row $r$ to box $k$ when 5 is still a candidate somewhere in the mini-row where row $r$ crosses box $k$. Then:
-\begin{itemize}
-\item The three 5s of the finished band sit in three mini-rows. ``Once per row'' means each row vertex is used by
-  exactly one of them, and ``once per box'' means each box vertex is used by exactly one. So the three mini-rows that
-  hold the 5s form a perfect matching of this graph, and it uses only existing edges, because the 5s must be at
-  candidates.
-\item Conversely, every perfect matching is a way the rows could share out the boxes.
-\item So a mini-row whose edge lies on no perfect matching cannot hold the 5, and 5 can be removed from all three of its
-  cells. This is the \emph{band rule}.
-\end{itemize}
-The biadjacency matrix is the $3\times 3$ table with $A_{rk}=1$ when 5 has a candidate in row $r$, box $k$. In the solver
-these 9 bits are computed directly from the digit's 27-bit band mask, and they are the index into the lookup table.
-
-\paragraph{A worked example.} Suppose that in some band, 5 can still go in boxes 0 and 1 of row 0, only box 0 of row 1,
-and boxes 1 and 2 of row 2 (\cref{fig:band}). The biadjacency matrix, with rows of the table for the rows of the band
-and columns for the boxes, is
-\[
-A = \begin{pmatrix} 1 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 1 & 1 \end{pmatrix}
-\qquad\longrightarrow\qquad
-\begin{pmatrix} 0 & \mathbf{1} & 0 \\ \mathbf{1} & 0 & 0 \\ 0 & 0 & \mathbf{1} \end{pmatrix}.
-\]
-Row 1 of the table has a single 1, so row 1 must take box 0. Box 0 is then used, so row 0 must take box 1, and then
-row 2 must take box 2. That is the only permutation that fits, shown on the right. The entries $A_{00}$ and $A_{21}$
-lie on no perfect matching, so 5 is removed from the mini-row of row 0 in box 0 and the mini-row of row 2 in box 1,
-even though nothing inside those mini-rows ruled it out.
-
-\paragraph{What familiar techniques look like in this picture.} A human solver would reach the same conclusion in
-steps: ``in row 1 the 5 must be in box 0, so box 0's 5 is in row 1, so row 0 can't have its 5 in box 0'', and so on.
-Several named techniques are single cases of the matching test. If a row has candidates in only one box, that box
-belongs to that row (a locked-candidate deduction), and the other rows lose that box. If two rows of the band have
-candidates only in the same two boxes, those two boxes are used up by them, so the third row must use the third box.
-Hall's theorem~\cite{hall1935representatives} captures all of these at once: a perfect matching exists exactly when
-every set of $k$ vertices on one side is joined to at least $k$ vertices on the other. The table does the whole
-analysis in one lookup instead of a chain of named steps.
-
-\paragraph{What the graph leaves out.} The graph only records \emph{whether} a mini-row still holds a candidate, not in
-which of its three columns. So the band rule removes whole mini-rows and never chooses between the cells of one; the
-columns are handled by the next rule and by the other constraints.
-
-\paragraph{The stack version.} Turn the picture sideways. In a stack, 5 appears once in each of the stack's three
-columns and once in each of its three boxes, and the three boxes of a stack lie in the three different bands, so
-``once per box'' is the same as ``once per band''. The bipartite graph now has the three bands on one side and the
-stack's three columns on the other, with an edge from band $b$ to column $c$ when 5 is still a candidate in column $c$
-within band $b$. The finished grid's three 5s in the stack again form a perfect matching, so any (band, column) edge on
-no perfect matching can be deleted: 5 is removed from that column in that band. This is the \emph{stack rule}. For
-example, if in one stack 5 can be in columns $\{0,1\}$ in band 0, only column 0 in band 1, and any column in band 2,
-then band 1 takes column 0, band 0 must take column 1, and band 2 column 2: three of the six edges are deleted. The
-solver uses the same 512-entry table as for the band rule.
-
-\paragraph{The general principle.} The same reasoning applies to any Sudoku unit: in a row, the nine cells must be
-paired one-to-one with the nine digits, which is a perfect matching in a $9\times 9$ bipartite graph of cells and digits.
-R\'egin's filtering algorithm for \texttt{alldifferent} constraints~\cite{regin1994filtering} deletes every edge of such
-a graph that lies on no perfect matching, using an efficient matching algorithm, and constraint solvers use it for
-Sudoku~\cite{simonis2005sudoku}. Our rules apply the same principle to much smaller graphs, three against three, which
-is small enough to precompute every case and apply it with one table lookup.
-
-\paragraph{Permanent.} We also use the \emph{permanent} of a $2\times 2$ matrix $\bigl(\begin{smallmatrix} a & b \\ c
-& d \end{smallmatrix}\bigr)$, which is $ad+bc$ (the determinant with a plus sign). For a 0-1 matrix it is nonzero
-exactly when the two-by-two graph has a perfect matching, which gives a compact way to state when an entry of a
-$3\times 3$ table lies on a perfect matching (\cref{sec:rules}).
-
-Finally, a \emph{template} is one complete way of placing a single digit nine times, once in every row, column and
-box. There are 46{,}656 templates; \cref{sec:negative} tests a solver built on them.
+A \emph{bipartite graph} has two sets of vertices, $U$ and $V$, and edges that each join a vertex of $U$ to a vertex
+of $V$. A \emph{perfect matching} is a set of edges that uses every vertex exactly once. When $|U|=|V|=3$ there are
+$3!=6$ ways to pair the vertices of $U$ one-to-one with those of $V$, and a perfect matching is one of these six whose
+three pairs are all edges. We write such a graph as its \emph{biadjacency matrix}, the $3\times 3$ 0-1 matrix $A$ with
+$A_{uv}=1$ when $u$ and $v$ are joined; a perfect matching is then a permutation matrix that fits inside $A$. An edge
+that lies on no perfect matching can be deleted when every vertex must be matched, since no complete pairing uses it.
+By Hall's theorem~\cite{hall1935representatives}, a perfect matching exists exactly when every set of $k$ vertices on
+one side is joined to at least $k$ vertices on the other. R\'egin's filtering algorithm for \texttt{alldifferent}
+constraints~\cite{regin1994filtering} deletes every such edge of a $9\times 9$ graph of cells against digits, and
+constraint solvers use it for Sudoku~\cite{simonis2005sudoku}. Our rules (\cref{sec:rules}) apply the same idea to
+$3\times 3$ graphs, which are small enough that every case can be precomputed in a 512-entry table.
 
 \section{Related work}
 \label{sec:related}
@@ -322,9 +253,14 @@ write-ups, and then says exactly what we took from each.
 
 \subsection{Three general encodings}
 
-\paragraph{Exact cover.} A Sudoku is an \emph{exact cover} problem: there are 729 possible choices (a digit in a
-cell) and 324 constraints (each cell filled once, and each digit once in each row, column and box), and a solution is a
-set of 81 choices that satisfies every constraint exactly once. Knuth's \emph{dancing links} algorithm (Algorithm X
+\paragraph{Exact cover.} A Sudoku is an \emph{exact cover} problem. A \emph{choice} puts one digit in one cell, so
+there are $81\times 9=729$ choices. A \emph{constraint} must be satisfied exactly once, and there are four families of
+81: each of the 81 cells holds one digit; each of the 9 rows holds each of the 9 digits once, $9\times 9=81$; likewise
+each column, $81$; and each box, $81$. That is $4\times 81=324$ constraints. Every choice satisfies exactly four of
+them, one per family: a 5 in the top-left cell fills that cell and puts a 5 in the top row, in the left column and in
+the top-left box. A solution
+is a set of choices that satisfies every constraint exactly once; since each choice covers 4 of the 324, it has
+$324/4=81$ choices, one per cell. Knuth's \emph{dancing links} algorithm (Algorithm X
 with a linked-list representation) solves exact cover problems and discusses Sudoku at length in
 \emph{The Art of Computer Programming}~\cite{knuth2022taocp4b}. kudoku~\cite{attractivechaos2011kudoku}, the fastest
 exact-cover solver in tdoku's benchmark, uses this formulation without dancing links: it stores for each choice its 4
@@ -411,7 +347,7 @@ benchmark methodology.
 \paragraph{From DPLL to triads.} The write-up starts from DPLL with a variable per (cell, digit), adds clauses saying
 that each row, column and box contains each digit, so that hidden singles follow from unit propagation, and observes
 that locked candidates are exactly the deductions this still misses. To capture them it adds new variables for the
-triads, the mini-rows and mini-columns: a triad variable for digit $v$ is true when $v$ is in that triad. Rows,
+triads, horizontal and vertical: a triad variable for digit $v$ is true when $v$ is in that triad. Rows,
 columns and boxes then become ``exactly one of these three triads'' constraints, and each triad must contain exactly
 three digits. All of these are cardinality constraints, applied by one rule: when the number of literals still possible
 equals the number required, all of them are asserted.
@@ -420,7 +356,7 @@ equals the number required, all of them are asserted.
 assignment of the band's rows to its boxes; the write-up calls these \emph{configurations}. tdoku stores, for each band
 (horizontal and vertical) and each of its six configurations, the 9-bit set of digits that can still take it. The
 write-up notes that configurations add no new deductions, but ``do in one step what previously might have required
-multiple steps''. The six configurations of a band are the six perfect matchings of \cref{sec:terms}, so tdoku's band
+multiple steps''. The six configurations of a band are the six one-to-one pairings of its rows with its boxes (\cref{sec:terms}), so tdoku's band
 state is our band rule in a different form, maintained for rows and columns alike.
 
 \paragraph{SIMD layout and propagation.} Each box is one 256-bit register viewed as a $4\times 4$ matrix of 16-bit
@@ -451,7 +387,7 @@ puzzles.
 
 RKCR7~\cite{rkcr7_2026autoresearch} (March 2026) is a Rust solver in the same family, written by an AI coding agent in
 a loop of automated experiments. It reports beating tdoku on four of six of tdoku's data sets on an AMD processor with
-AVX-512, for example \SI{3.04e-5}{\second} against \SI{5.87e-5}{\second} per puzzle on the hardest set. Its comparison is not like for like: its
+AVX-512, for example \SI{30.4}{\micro\second} against \SI{58.7}{\micro\second} per puzzle on the hardest set. Its comparison is not like for like: its
 \texttt{solve} function stops at the first solution, while tdoku was timed with tdoku's own benchmark program, which by
 default also checks uniqueness (a limit of 2). The published log confirms this: it shows tdoku making 61.67 guesses per
 puzzle on the 1905 11+ set, exactly tdoku's count at limit 2 on our machine, against 34.17 at limit 1. Its solver
@@ -465,7 +401,7 @@ corpora, on several x86 machines. Its benchmark measures time to the \emph{first
 consistently but not comparably with our limit-2 results, and its documentation states that its lead is specific to
 x86. On ARM it ports its triad engine to NEON, but compares only against rust\_sudoku, noting that tdoku cannot be
 built there; its ARM measurements come from a shared cloud runner. Its band engine branches on the first
-two-candidate cell. It computes the band rule exactly, from the permutation matrices of each mini-row pattern, and
+two-candidate cell. It computes the band rule exactly, from the permutation matrices of each triad pattern, and
 presents this as a strengthening of JCZSolve's table, which it describes as an approximation. We checked JCZSolve's
 table (\texttt{TblComplexMask}) against the perfect-matching definition on all 512 patterns and found them identical,
 so JCZSolve already applies the exact band rule.
@@ -529,11 +465,117 @@ benchmark, data sets, limit 2 & tdoku~\cite{dillon2019nerdsniped} & run on ARM t
 in each of the band's three rows and exactly one in each of its three boxes. So the three 5s pair the rows with the
 boxes: each row gets its own box. Some pairings may already be impossible because 5 has been ruled out of that part of
 the row. If a particular row--box combination cannot be part of \emph{any} complete pairing, then 5 cannot go in that
-mini-row, even though nothing in the mini-row itself rules it out. This one idea, checked with a lookup table,
+triad, even though nothing in the triad itself rules it out. This one idea, checked with a lookup table,
 covers locked candidates between rows and boxes, and it narrows a box that has a single place left for the digit down
-to a row with a single place left, which the solver then fills. The \emph{band rule} is this check. The \emph{stack rule} is the same check turned sideways: in a stack, the
-digit's three placements pair the stack's three columns with its three boxes, and each box of a stack lies in a
-different band, so this is a pairing of bands with columns.
+to a row with a single place left, which the solver then fills. The \emph{band rule} is this check. In the terms of
+\cref{sec:terms}, the band's rows and boxes are the two sides of a bipartite graph, row $r$ is joined to box $k$ when
+the digit can still go in their triad, the digit's three placements form a perfect matching, and every edge that lies
+on no perfect matching is deleted. \Cref{fig:band} works through an example. The rule removes whole triads; it never
+chooses between the cells of one.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[x=0.5cm,y=0.5cm,
+  cand/.style={font=\small\bfseries},
+  gone/.style={font=\small\bfseries,red!80!black},
+  vtx/.style={circle,draw,fill=white,inner sep=1.6pt}]
+  % ---------- (a) before ----------
+  \begin{scope}
+    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(a)} candidates for 5 in one band};
+    \foreach \r/\k in {0/0,0/1,1/0,1/1,2/0,2/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\c in {0/1,0/4,1/0,1/5,2/2,2/3,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+  \end{scope}
+  % ---------- (b) graph ----------
+  \begin{scope}[xshift=8.6cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(b)} rows vs.\ boxes};
+    \foreach \r in {0,1,2} \node[vtx,label={[font=\scriptsize]left:row \r}] (r\r) at (0,3.5-1.5*\r) {};
+    \foreach \k in {0,1,2} \node[vtx,label={[font=\scriptsize]right:box \k}] (b\k) at (4,3.5-1.5*\k) {};
+    \draw[very thick] (r0) -- (b0);
+    \draw[very thick] (r0) -- (b1);
+    \draw[very thick] (r1) -- (b0);
+    \draw[very thick] (r1) -- (b1);
+    \draw[very thick] (r2) -- (b2);
+    \draw[dashed,thick,red] (r2) -- (b0);
+    \draw[dashed,thick,red] (r2) -- (b1);
+  \end{scope}
+  % ---------- (c) matrices ----------
+  \begin{scope}[yshift=-3.3cm]
+    \node[anchor=west] at (-2.2,5.6) {\small\textbf{(c)} the same graph as a table};
+    \node[font=\footnotesize,align=center] at (5.0,4.1) {$A$: 1 = a 5 is still possible\\ in that row's triad in that box};
+    \node[font=\footnotesize] at (5.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & 1 & 1 & 0 \\
+      \text{row }1 & 1 & 1 & 0 \\
+      \text{row }2 & 1 & 1 & 1
+      \end{array}$};
+    \draw[->,thick] (10.2,1.5) -- (14.8,1.5) node[midway,above,font=\footnotesize,align=center] {keep the 1s on a\\perfect matching};
+    \node[font=\footnotesize,align=center] at (20.0,4.1) {$\mathrm{supp}(A)$: the union of the two pairings\\ that fit (bold); \textcolor{red}{red} 1s are removed};
+    \node[font=\footnotesize] at (20.0,1.5) {$\begin{array}{r|ccc}
+        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
+      \text{row }0 & \mathbf{1} & \mathbf{1} & 0 \\
+      \text{row }1 & \mathbf{1} & \mathbf{1} & 0 \\
+      \text{row }2 & \textcolor{red}{\cancel{1}} & \textcolor{red}{\cancel{1}} & \mathbf{1}
+      \end{array}$};
+  \end{scope}
+  % ---------- (d) after ----------
+  \begin{scope}[xshift=3.5cm,yshift=-7.0cm]
+    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(d)} after the band rule};
+    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
+    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
+    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
+    \foreach \r/\k in {0/0,0/1,1/0,1/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
+    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
+    \draw[thick] (0,0) rectangle (9,3);
+    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
+    \foreach \r/\c in {0/1,0/4,1/0,1/5,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
+    \foreach \r/\c in {2/2,2/3} {
+      \node[gone] at (\c+0.5,2.5-\r) {5};
+      \draw[red,thick] (\c+0.15,2.15-\r) -- (\c+0.85,2.85-\r);
+    }
+  \end{scope}
+\end{tikzpicture}
+\caption{The band rule for the digit 5, on the example used throughout the paper. (a) The band's three rows and three
+boxes; 5 is still a candidate in the cells shown, and the shaded triads are those that contain a candidate. (b) The
+bipartite graph: an edge joins row $r$ and box $k$ when triad $(r,k)$ is shaded. Rows 0 and 1 are joined only to
+boxes 0 and 1, so they use up both, and row 2 must take box 2. Two perfect matchings remain (row 0 with box 0 and row 1
+with box 1, or the other way round), and the black edges are their union. The two red dashed edges are in no perfect
+matching. (c) The same graph as a table $A$: one row of the table per row of the band, one column per box, and a 1 where the
+graph has an edge, that is, where 5 is still possible in that triad. Keeping only the 1s that lie on a perfect
+matching gives $\mathrm{supp}(A)$: the bold 1s are the union of the two pairings that fit, and the red 1s, the dashed
+edges of (b), are removed. (d) Removing the red edges removes 5 from triads (row 2, box 0) and (row 2, box 1): the
+candidates in columns 2 and 3 of row 2 are eliminated, although nothing in their own row, column or box rules them
+out directly. The stack rule is the same test with bands in place of rows and a stack's
+columns in place of boxes.}
+\label{fig:band}
+\end{figure}
+
+\paragraph{The stack rule.} The \emph{stack rule} is the same check turned sideways. In a stack, the digit appears once
+in each of the stack's three columns and once in each of its three boxes, and the three boxes of a stack lie in three
+different bands, so the digit's three placements pair the bands one-to-one with the stack's columns. The graph has the
+three bands on one side and the stack's three columns on the other, with an edge from band $b$ to column $c$ when the
+digit can still go in column $c$ within band $b$, and every edge that lies on no perfect matching is deleted: the digit
+is removed from that column within that band. For example, if in one stack 5 can go in columns 0 and 1 in band 0, only
+in column 0 in band 1, and in any of the three columns in band 2, then band 1 must take column 0, band 0 column 1 and
+band 2 column 2, and three of the six edges are deleted. The locked-column step of JCZSolve is the special case of a
+band joined to a single column, and tdoku gets the same inference from its vertical triads. Both rules are the matching
+constraints of Simonis~\cite{simonis2005sudoku}, Section 5.3, restricted to $3\times 3$ graphs, which is what lets one
+table lookup apply them.
+
+\paragraph{Hidden singles.} The solver detects hidden singles only in rows. \Cref{prop:hidden} in \cref{sec:proofs} shows that this loses
+nothing in any state that has a solution: once propagation stops, a digit with a single place left in a box or a column also has a single place left
+in that cell's row, so the row rule has already placed it.
+
+Empirically, in a reference solver that applies every rule to every (digit, band) in each round, removing box and
+column hidden singles from a solver with both rules and row singles leaves the search tree unchanged on the 1106
+forum-hardest, 17-clue, magictour and kaggle sets (284.2 vs.\ 284.2 nodes per puzzle on 1106), but propagation takes
+up to 6\% more rounds per node, because those singles are then found a round later (8.11 vs.\ 7.62 on 17-clue).
+Dropping row singles too doubles the tree (621 nodes on 1106).
 
 \subsection{Definitions}
 
@@ -551,49 +593,13 @@ soundness is the reverse inclusion.
 \begin{definition}[support of a $3\times 3$ matrix]
 Let $A$ be a $3\times 3$ 0-1 matrix. A \emph{perfect matching} of $A$ is a permutation $\pi$ of $\{0,1,2\}$ with
 $A_{i\pi(i)}=1$ for $i=0,1,2$. The \emph{support} $\mathrm{supp}(A)$ is the 0-1 matrix whose 1-entries are the entries
-$(i,\pi(i))$ over all perfect matchings $\pi$ of $A$. The table \textsc{Matchable} stores $\mathrm{supp}(A)$ for all
+$(i,\pi(i))$ over all perfect matchings $\pi$ of $A$. The table \textsc{PermutationUnion} stores $\mathrm{supp}(A)$ for all
 512 matrices, computed from this definition by testing the 6 permutations.
 \end{definition}
 
 For digit $d$ and band $b$ let $A^{d,b}$ be the $3\times 3$ matrix with $A^{d,b}_{rk}=1$ when $d$ has a candidate in
-the mini-row of row $r$ and box $k$ of band $b$ (\cref{fig:band}). For digit $d$ and stack $s$, let $B^{d,s}$ be the
+the triad of row $r$ and box $k$ of band $b$ (\cref{fig:band}). For digit $d$ and stack $s$, let $B^{d,s}$ be the
 $3\times 3$ matrix with $B^{d,s}_{bj}=1$ when $d$ has a candidate in column $3s+j$ within band $b$.
-
-\subsection{Lemmas about the $3\times 3$ support}
-
-For an entry $(i,j)$ of a $3\times 3$ matrix $A$, let $A^{(ij)}$ be the $2\times 2$ submatrix left after deleting row $i$
-and column $j$: the other two rows and the other two columns, in their original order (they need not be adjacent). The
-\emph{permanent} of a $2\times 2$ matrix is its determinant with a plus sign in place of the minus:
-\[
-\operatorname{perm}\begin{pmatrix} a & b \\ c & e \end{pmatrix} = ae + bc .
-\]
-For a 0-1 matrix, $ae=1$ exactly when the straight pairing (first row with first column, second with second) is
-available, and $bc=1$ exactly when the crossed pairing is, so the permanent counts the perfect matchings of the
-$2\times 2$ graph and is nonzero exactly when it has one.
-
-\begin{lemma}[deleting a row and a column]
-\label{lem:minor}
-$(i,j)$ is a 1-entry of $\mathrm{supp}(A)$ if and only if $A_{ij}=1$ and $\operatorname{perm} A^{(ij)}\neq 0$. In words:
-row $i$ can be paired with column $j$ exactly when that entry is available and the other two rows can still be paired
-with the other two columns.
-\end{lemma}
-\begin{proof}
-A perfect matching $\pi$ of $A$ with $\pi(i)=j$ uses the entry $(i,j)$, so it needs $A_{ij}=1$, and on the other two
-rows it is a perfect matching of $A^{(ij)}$. Conversely, when $A_{ij}=1$, adding the pair $(i,j)$ to a perfect matching
-of $A^{(ij)}$ gives a perfect matching of $A$ with $\pi(i)=j$. So such a $\pi$ exists exactly when $A_{ij}=1$ and
-$A^{(ij)}$ has a perfect matching, that is, a nonzero permanent.
-\end{proof}
-
-\paragraph{Example.} Take the table of \cref{fig:band}, rows of the band against boxes:
-\[
-A=\begin{pmatrix} 1 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 1 & 1 \end{pmatrix}.
-\]
-For $(0,1)$, row 0 with box 1: $A_{01}=1$, and deleting row 0 and column 1 leaves rows 1, 2 and columns 0, 2,
-$A^{(01)}=\bigl(\begin{smallmatrix} 1 & 0 \\ 0 & 1 \end{smallmatrix}\bigr)$, with permanent $1\cdot 1+0\cdot 0=1$. So
-$(0,1)$ is kept. For $(0,0)$, row 0 with box 0: $A_{00}=1$, but deleting row 0 and column 0 leaves
-$A^{(00)}=\bigl(\begin{smallmatrix} 0 & 0 \\ 1 & 1 \end{smallmatrix}\bigr)$, with permanent $0\cdot 1+0\cdot 1=0$: if row
-0 took box 0, rows 1 and 2 could not share boxes 1 and 2, since row 1 has neither. So $(0,0)$ is removed, which is the
-red entry in \cref{fig:band}(c).
 
 \begin{lemma}[idempotence]
 \label{lem:idempotent}
@@ -607,13 +613,96 @@ $\mathrm{supp}(A)$. Conversely $\mathrm{supp}(A)\le A$ entrywise, so a perfect m
 Equal sets of perfect matchings give equal supports. A perfect matching has one entry in each row and each column.
 \end{proof}
 
+\subsection{Only 50 supports}
+\label{sec:fifty}
+
+\textsc{PermutationUnion} has 512 entries, but only 50 different values appear in it. This subsection explains why,
+and what it means for the tables built on it.
+
+Number the 6 permutations of $\{0,1,2\}$ and identify each with its \emph{pattern}, the three entries $(i,\pi(i))$, as a
+$3\times 3$ 0-1 matrix. Two facts about patterns do most of the work.
+\begin{itemize}
+\item \emph{Every entry lies on exactly two permutations:} once row $i$ is paired with column $j$, the other two rows
+  can be paired with the other two columns in two ways.
+\item \emph{Two permutations of the same parity share no entry, and two of opposite parity share exactly one.} The
+  three even permutations (the identity and the two 3-cycles) tile the $3\times 3$ grid, and so do the three odd ones
+  (the three swaps). The two permutations through an entry therefore have opposite parity, so for a permutation $\pi$
+  the other permutations through its three entries are exactly the three permutations of the other parity.
+\end{itemize}
+
+\begin{proposition}
+\label{prop:fifty}
+The values of $\mathrm{supp}$ over all 512 matrices are exactly the unions of sets of permutation patterns, and there
+are 50 of them. A union that is not all nine entries comes from exactly one set of permutations, namely the
+permutations whose patterns lie inside it; the all-ones matrix comes from 15 sets.
+\end{proposition}
+\begin{proof}
+By definition $\mathrm{supp}(A)$ is the union of the patterns that fit in $A$. Conversely, if $U$ is the union of a
+set $S$ of patterns, every pattern of $S$ fits in $U$, so $\mathrm{supp}(U)\supseteq U$, and $\mathrm{supp}(U)\le U$
+always; hence $\mathrm{supp}(U)=U$. So the values are exactly the unions.
+
+Suppose the union $U$ of $S$ contains the pattern of some $\pi\notin S$. Each of $\pi$'s three entries is then covered by
+the other permutation through it, so $S$ contains all three permutations of the parity opposite to $\pi$'s, and these
+already cover all nine entries. So a union that is not all ones contains no pattern outside its set, and different
+sets give different unions.
+
+It remains to count the sets whose union is all ones. An entry is missed only when both permutations through it are
+left out. A set of at most two patterns covers at most six entries. Three patterns cover nine exactly when they are
+pairwise disjoint, that is, of one parity: 2 sets. A set of four leaves out two permutations, and misses an entry
+exactly when those two share one, that is, have opposite parity; leaving out a same-parity pair ($3+3$ choices) covers
+everything: 6 sets. Every set of five or six covers everything, since every entry lies on two permutations: 6 sets and
+1 set. That is $2+6+6+1=15$ of the $2^6=64$ sets, so there are $64-15+1=50$ unions.
+\end{proof}
+
+\Cref{tab:fifty} sorts the 50 supports by the number of permutations in them and counts how many of the 512 matrices
+have each one.
+
+\begin{table}[h]
+\centering
+\caption{The 50 values of \textsc{PermutationUnion}, by the number of perfect matchings they contain.}
+\label{tab:fifty}
+\small
+\begin{tabular}{rrrrr}
+\toprule
+perfect matchings & entries & supports & matrices with each support & matrices in all \\
+\midrule
+0 & 0 & 1 & 265 & 265 \\
+1 & 3 & 6 & 25 & 150 \\
+2, opposite parity & 5 & 9 & 7 & 63 \\
+2, same parity & 6 & 6 & 1 & 6 \\
+3, not one parity & 7 & 18 & 1 & 18 \\
+4 & 8 & 9 & 1 & 9 \\
+6 & 9 & 1 & 1 & 1 \\
+\midrule
+ & & 50 & & 512 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Three things stand out. More than half of all $3\times 3$ tables, 265 of 512, have no perfect matching; for
+the band rule these are the contradictions. A table with a single perfect matching, where the rule forces the whole
+pairing, is the support of 25 tables each. And 34 of the 50 supports are the support of no table but themselves: the band rule never shrinks a
+table down to one of them, it can only find one already in place.
+
+\paragraph{What it means for the tables.} The index of \textsc{SingleRows} is $\mathit{kept}\mid
+\mathit{boxes}\ll 9$, where $\mathit{kept}=\textsc{PermutationUnion}[\mathit{boxCandidates}]$ and $\mathit{boxes}$ is
+\textsc{OneColumnBoxes}$[\mathit{columns}]$, 3 bits. Since $\mathit{kept}$ is a support and is never 0 there (that case
+returns as a contradiction first), only $49\times 8=392$ of the 4{,}096 entries can ever be read. We counted the reads
+over every lookup with limit 2: on six of the seven data sets all 392 are read, and on serg\_benchmark 178. The 392
+entries are spread over 56 of the table's 64 cache lines of 64 bytes, so in practice almost all of its 4\,KB is kept
+in cache anyway, well within a 48 to 128\,KB level-1 data cache. Packing the table to 392 entries would need a second
+table to turn $\mathit{kept}$ into a number from 0 to 48, a load that the main lookup would have to wait for on the
+hottest path of the solver, to save about 3.6\,KB, so we keep the full table. The tables indexed by raw candidates do
+not shrink this way: $\mathit{boxCandidates}$, the index of \textsc{PermutationUnion} and \textsc{PossibleCells} in the
+band rule, takes all 512 values on two of the data sets, and at least 488 on every set except kaggle (247) and serg\_benchmark (325).
+
 \subsection{Soundness of the rules}
 
 \begin{lemma}[band rule]
 \label{lem:band}
 Let $\sigma\in\mathrm{Sol}(C)$, $d$ a digit and $b$ a band. For each row $r$ of the band let $\kappa(r)$ be the box of
 the cell of row $r$ where $\sigma$ puts $d$. Then $\kappa$ is a perfect matching of $A^{d,b}$. Consequently: removing $d$
-from every cell of every mini-row $(r,k)$ with $\mathrm{supp}(A^{d,b})_{rk}=0$ is sound, and if $A^{d,b}$ has no perfect
+from every cell of every triad $(r,k)$ with $\mathrm{supp}(A^{d,b})_{rk}=0$ is sound, and if $A^{d,b}$ has no perfect
 matching then $\mathrm{Sol}(C)=\emptyset$.
 \end{lemma}
 \begin{proof}
@@ -621,7 +710,7 @@ By the row constraint, $\sigma$ puts $d$ in exactly one cell $x_r$ of each row $
 defined. Every cell of the band lies in one of its rows, so $x_0,x_1,x_2$ are all the cells of the band holding $d$. By
 the box constraint each of the band's three boxes holds exactly one of them, so $\kappa$ is a bijection. Since $\sigma$
 is consistent with $C$, $(x_r,d)\in C$, so $A^{d,b}_{r\kappa(r)}=1$: $\kappa$ is a perfect matching, and
-$(r,\kappa(r))$ is in the support. If $\sigma$ put $d$ at a cell $x$ of mini-row $(r,k)$, then $x=x_r$ and $k=\kappa(r)$,
+$(r,\kappa(r))$ is in the support. If $\sigma$ put $d$ at a cell $x$ of triad $(r,k)$, then $x=x_r$ and $k=\kappa(r)$,
 so $(r,k)$ is in the support; the removed pairs are therefore unused. If $A^{d,b}$ has no perfect matching, no
 $\sigma$ can exist.
 \end{proof}
@@ -634,134 +723,13 @@ Consequently removing $d$ from column $3s+j$ within band $b$ whenever $\mathrm{s
 $B^{d,s}$ has no perfect matching then $\mathrm{Sol}(C)=\emptyset$.
 \end{lemma}
 \begin{proof}
-The cells of stack $s$ that lie in band $b$ are exactly the box where band $b$ and stack $s$ cross. By the box
-constraint $\sigma$ puts $d$ in exactly one cell $y_b$ of that box, so band $b$ has exactly one $d$ in the stack's
-columns, and $\tau$ is well defined. The stack's cells are the union of its three boxes, so $y_0,y_1,y_2$ are all the
-cells of the stack holding $d$; by the column constraint each of its three columns holds exactly one of them, so $\tau$
-is a bijection. Consistency gives $(y_b,d)\in C$, so $B^{d,s}_{b\tau(b)}=1$. The rest is as in \cref{lem:band}.
+This is the argument of \cref{lem:band} with the stack's bands in place of a band's rows and the stack's columns in
+place of a band's boxes; only the counting step differs. The cells of band $b$ in stack $s$ form one box, so by the
+box constraint $\sigma$ puts $d$ in exactly one of them, $y_b$, and $\tau(b)$ is well defined. The cells $y_0,y_1,y_2$
+are then all the cells of the stack holding $d$, and by the column constraint each of the stack's three columns holds
+exactly one of them, so $\tau$ is a bijection. Consistency gives $(y_b,d)\in C$, so $B^{d,s}_{b\tau(b)}=1$ and $\tau$ is
+a perfect matching. The two consequences follow as in \cref{lem:band}.
 \end{proof}
-
-\begin{lemma}[singles]
-\label{lem:singles}
-(a) If a cell $x$ has exactly one candidate $d$, removing $d$ from every peer of $x$ is sound. (b) If some unit has
-exactly one cell $x$ with $(x,d)\in C$, removing every other digit from $x$ is sound. (c) If some cell has no
-candidate, or some digit has no candidate cell in some unit, then $\mathrm{Sol}(C)=\emptyset$.
-\end{lemma}
-\begin{proof}
-(a) Every consistent $\sigma$ has $\sigma(x)=d$, and a solution does not repeat $d$ in a unit. (b) Every solution puts
-$d$ somewhere in the unit, at a candidate, so at $x$. (c) Immediate from the definitions.
-\end{proof}
-
-\paragraph{The rules in the solver.} The band rule of \cref{alg:band} (line 3) keeps exactly the cells of mini-rows in
-$\mathrm{supp}(A^{d,b})$, so by \cref{lem:band} it is sound, and a zero result is a correct contradiction. The stack rule
-(\cref{alg:stack}) keeps exactly the column pairs in $\mathrm{supp}(B^{d,s})$ for each stack, so by \cref{lem:stack} it
-is sound. Both rules are the matching constraints of Simonis~\cite{simonis2005sudoku}, Section 5.3. The locked-column step of
-JCZSolve is the special case of a band with one column in a stack: its row of
-$B^{d,s}$ has a single 1, which every perfect matching uses, so the column's entries in the other bands lie on no
-perfect matching.
-
-\begin{figure}[tbp]
-\centering
-\begin{tikzpicture}[x=0.5cm,y=0.5cm,
-  cand/.style={font=\small\bfseries},
-  gone/.style={font=\small\bfseries,red!80!black},
-  vtx/.style={circle,draw,fill=white,inner sep=1.6pt}]
-  % ---------- (a) before ----------
-  \begin{scope}
-    \node[anchor=west] at (-2.2,5.1) {\small\textbf{(a)} candidates for 5 in one band};
-    \foreach \r/\k in {0/0,0/1,1/0,2/1,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
-    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
-    \draw[thick] (0,0) rectangle (9,3);
-    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
-    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
-    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
-    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
-    \foreach \r/\c in {0/1,0/4,1/0,1/2,2/3,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
-  \end{scope}
-  % ---------- (b) graph ----------
-  \begin{scope}[xshift=8.6cm]
-    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(b)} rows vs.\ boxes};
-    \foreach \r in {0,1,2} \node[vtx,label={[font=\scriptsize]left:row \r}] (r\r) at (0,3.5-1.5*\r) {};
-    \foreach \k in {0,1,2} \node[vtx,label={[font=\scriptsize]right:box \k}] (b\k) at (4,3.5-1.5*\k) {};
-    \draw[very thick] (r1) -- (b0);
-    \draw[very thick] (r0) -- (b1);
-    \draw[very thick] (r2) -- (b2);
-    \draw[dashed,thick,red] (r0) -- (b0);
-    \draw[dashed,thick,red] (r2) -- (b1);
-  \end{scope}
-  % ---------- (c) matrices ----------
-  \begin{scope}[yshift=-3.3cm]
-    \node[anchor=west] at (-2.2,5.6) {\small\textbf{(c)} the same graph as a table};
-    \node[font=\footnotesize,align=center] at (5.0,4.1) {$A$: 1 = a 5 is still possible\\ in that row's mini-row of that box};
-    \node[font=\footnotesize] at (5.0,1.5) {$\begin{array}{r|ccc}
-        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
-      \text{row }0 & 1 & 1 & 0 \\
-      \text{row }1 & 1 & 0 & 0 \\
-      \text{row }2 & 0 & 1 & 1
-      \end{array}$};
-    \draw[->,thick] (10.2,1.5) -- (14.8,1.5) node[midway,above,font=\footnotesize,align=center] {keep the 1s on a\\perfect matching};
-    \node[font=\footnotesize,align=center] at (20.0,4.1) {$\mathrm{supp}(A)$: the one pairing that fits (bold);\\ \textcolor{red}{red} 1s are removed};
-    \node[font=\footnotesize] at (20.0,1.5) {$\begin{array}{r|ccc}
-        & \text{box }0 & \text{box }1 & \text{box }2 \\ \hline
-      \text{row }0 & \textcolor{red}{\cancel{1}} & \mathbf{1} & 0 \\
-      \text{row }1 & \mathbf{1} & 0 & 0 \\
-      \text{row }2 & 0 & \textcolor{red}{\cancel{1}} & \mathbf{1}
-      \end{array}$};
-  \end{scope}
-  % ---------- (d) after ----------
-  \begin{scope}[xshift=3.5cm,yshift=-7.0cm]
-    \node[anchor=west] at (-1.8,5.1) {\small\textbf{(d)} after the band rule};
-    \foreach \c in {0,...,8} \node[font=\scriptsize,gray] at (\c+0.5,3.35) {\c};
-    \foreach \k in {0,1,2} \node[font=\scriptsize] at (3*\k+1.5,4.05) {box \k};
-    \foreach \r in {0,1,2} \node[font=\scriptsize,anchor=east] at (-0.1,2.5-\r) {row \r};
-    \foreach \r/\k in {0/1,1/0,2/2} \fill[gray!18] (3*\k,2-\r) rectangle (3*\k+3,3-\r);
-    \draw[step=1,gray!55,very thin] (0,0) grid (9,3);
-    \draw[thick] (0,0) rectangle (9,3);
-    \foreach \x in {3,6} \draw[thick] (\x,0) -- (\x,3);
-    \foreach \r/\c in {0/4,1/0,1/2,2/8} \node[cand] at (\c+0.5,2.5-\r) {5};
-    \foreach \r/\c in {0/1,2/3} {
-      \node[gone] at (\c+0.5,2.5-\r) {5};
-      \draw[red,thick] (\c+0.15,2.15-\r) -- (\c+0.85,2.85-\r);
-    }
-  \end{scope}
-\end{tikzpicture}
-\caption{The band rule for the digit 5, on the example used throughout the paper. (a) The band's three rows and three
-boxes; 5 is still a candidate in the cells shown, and the shaded mini-rows are those that contain a candidate. (b) The
-bipartite graph: an edge joins row $r$ and box $k$ when mini-row $(r,k)$ is shaded. Row 1 has only one edge, so it must
-take box 0; then row 0 must take box 1, and row 2 box 2. That pairing, in black, is the only perfect matching. The two
-red dashed edges are in no perfect matching. (c) The same graph as a table $A$: one row of the table per row of the band, one column per box, and a 1 where the
-graph has an edge, that is, where 5 is still possible in that mini-row. Keeping only the 1s that lie on a perfect
-matching gives $\mathrm{supp}(A)$: the three bold 1s are the one pairing that fits, and the red 1s, the dashed edges of
-(b), are removed. (d) Removing the red edges removes 5 from mini-row (row 0, box 0) and mini-row
-(row 2, box 1): the candidates in column 1 of row 0 and column 3 of row 2 are eliminated, although nothing in their own
-row, column or box rules them out directly. The stack rule is the same test with bands in place of rows and a stack's
-columns in place of boxes.}
-\label{fig:band}
-\end{figure}
-
-The rule costs four table lookups: three 512-entry lookups turn the 27-bit band into the 9-bit matrix $A$, and a
-512-entry table maps $A$ to the cells of the mini-rows that lie on a perfect matching. This is the core of the band
-solvers of \cref{sec:background}; it covers the consequences of the digit's row and box constraints within the band (locked candidates between rows
-and boxes), while placing a digit, and removing the other digits from its cell, is a separate step.
-
-Transposing the argument gives the \textbf{stack rule}. Within a stack, $d$ occurs once in each of its three columns
-and once in each of its three boxes, and the boxes of a stack correspond one-to-one to the bands. So $d$'s placement pairs the three bands one-to-one with the stack's three columns, and a (band,
-column) pair can be kept only if it lies on a
-perfect matching of the $3\times 3$ graph whose edges are the pairs where $d$ still has a candidate. The matrix is
-read from each band's 9-bit set of columns in use, so the rule costs three table lookups per digit, and it only has
-to run when some band's column set changes. It subsumes the locked-column step of JCZSolve, which removes a column
-from the other bands when a box of this band has candidates in that column alone: that is the special case of a
-band vertex with degree one. tdoku gets the same inference from its vertical triads.
-
-The solver detects hidden singles only in rows. \Cref{prop:hidden} in \cref{sec:proofs} shows that this loses
-nothing: once propagation stops, a digit with a single place left in a box or a column also has a single place left
-in that cell's row, so the row rule has already placed it.
-
-Empirically, in a reference solver that applies every rule to every (digit, band) in each round, removing box and
-column hidden singles from a solver with both rules and row singles leaves the search tree unchanged on the 1106
-forum-hardest, 17-clue, magictour and kaggle sets (284.2 vs.\ 284.2 nodes per puzzle on 1106), but propagation takes
-up to 6\% more rounds per node, because those singles are then found a round later (8.11 vs.\ 7.62 on 17-clue).
-Dropping row singles too doubles the tree (621 nodes on 1106).
 
 \section{FastBandSolver}
 \label{sec:solver}
@@ -782,7 +750,7 @@ these steps with as few instructions and as few unpredictable branches as possib
 \label{sec:state}
 
 Following zhouyundong~\cite{zhouyundong2012solver}, candidates are stored by digit and band. For digit
-$d\in\{0,\dots,8\}$ and band $b\in\{0,1,2\}$, the 32-bit word $M_{d,b}$ holds a 27-bit mask of the cells of band $b$
+$d\in\{1,\dots,9\}$ and band $b\in\{0,1,2\}$, the 32-bit word $M_{d,b}$ holds a 27-bit mask of the cells of band $b$
 where $d$ can still go, with bit $9r+c$ for row $r\in\{0,1,2\}$ of the band and column $c\in\{0,\dots,8\}$:
 
 \begin{center}
@@ -794,50 +762,16 @@ row 2 (cols 8\ldots0) & row 1 (cols 8\ldots0) & row 0 (cols 8\ldots0) \\
 \end{tabular}
 \end{center}
 
-\noindent Within each 9-bit row, bits $3k$, $3k{+}1$, $3k{+}2$ are the \emph{mini-row} of box $k$. We write masks in octal (base 8),
-marked with a subscript 8: each octal digit is three bits, so a band mask is nine octal digits, one per mini-row,
-read from row 2, box 2 on the left to row 0, box 0 on the right. For example $777_8 = 511$ is nine 1-bits, the mask
-of one row. Two shifts, two ORs
-and an AND give the band's \emph{column set} $P(M)=(M \mid M\gg 9 \mid M\gg 18)\ \&\ 777_8$, the columns where the digit still has a
-candidate in the band, and $\mathrm{cols}(x)=x \mid x\ll 9 \mid x\ll 18$ spreads a 9-bit column set back to cells (two shifts
-and two ORs).
+\noindent Within each 9-bit row, bits $3k$, $3k{+}1$, $3k{+}2$ are the \emph{triad} of box $k$. We write a band mask as nine groups of three bits, one per triad,
+read from row 2, box 2 on the left to row 0, box 0 on the right. For example $111\,111\,111_2 = 511$ is nine 1-bits,
+the mask of one row. Two shifts, two ORs
+and an AND give the band's \emph{column set} $P(M)=(M \mid M\gg 9 \mid M\gg 18)\ \&\ 111\,111\,111_2$, the columns where the digit still has a
+candidate in the band (\texttt{bandColumns} in the code), and $\mathrm{cols}(x)=x \mid x\ll 9 \mid x\ll 18$ spreads a 9-bit column
+set back to cells (two shifts and two ORs; \texttt{columnCells} in the code).
 
-\paragraph{Example.} Take the band of \cref{fig:band} after the band rule: the digit has candidates in column 4 of row
-0, columns 0 and 2 of row 1, and column 8 of row 2. Writing each row's 9 bits with column 8 on the left:
-\begin{center}
-\small
-\begin{tabular}{lccc}
- & row 2 & row 1 & row 0 \\
-columns & \texttt{876543210} & \texttt{876543210} & \texttt{876543210} \\
-\midrule
-$M$ & \texttt{100000000} & \texttt{000000101} & \texttt{000010000} \\
-octal & \texttt{4 0 0} & \texttt{0 0 5} & \texttt{0 2 0} \\
-\end{tabular}
-\end{center}
-so $M=400005020_8$. Shifting right by 9 moves every row down one slot (row 1 lands where row 0 was, row 2 where row 1
-was), and shifting by 18 moves row 2 down to row 0's slot. OR-ing the three stacks all three rows on top of each other in
-the lowest slot:
-\begin{center}
-\small
-\begin{tabular}{lccc}
- & slot 2 & slot 1 & slot 0 \\
-\midrule
-$M$ & \texttt{100000000} & \texttt{000000101} & \texttt{000010000} \\
-$M\gg 9$ & \texttt{000000000} & \texttt{100000000} & \texttt{000000101} \\
-$M\gg 18$ & \texttt{000000000} & \texttt{000000000} & \texttt{100000000} \\
-\midrule
-OR & \texttt{100000000} & \texttt{100000101} & \texttt{100010101} \\
-\end{tabular}
-\end{center}
-Slot 0 now holds row 0 OR row 1 OR row 2: a 1 in every column with a candidate in any row. The upper slots hold
-leftover partial ORs with no meaning, and ANDing with $777_8$ keeps only slot 0, so $P(M)=100010101_2=425_8$: columns 0,
-2, 4 and 8. Spreading back is the reverse: shifting left by 9 and 18 copies the 9 bits into the other two rows, so
-$\mathrm{cols}(425_8)=425425425_8$, every cell of columns 0, 2, 4 and 8 in the band; nothing needs masking, since
-nothing moves past bit 26. The stack rule uses both. It reads each band's column set with $P$, decides which columns
-to keep, and applies the decision with $\mathrm{cols}$: keeping only columns 0 and 2 gives
-$M \,\&\, \mathrm{cols}(000000101_2) = 400005020_8 \,\&\, 005005005_8 = 000005000_8$, which keeps row 1's two candidates
-and removes those in columns 4 and 8. The band update compares $P$ of the new mask with $P$ of the old one to decide
-whether the stack rule needs to run at all.
+\paragraph{Why one word per band, not one per row.} Most of the solver's work is on a whole band at once (the band
+rule, the change test, the stack rule's AND, placements and the candidate counters), and each of these is one
+instruction on a 27-bit word but would be three on separate 9-bit rows.
 
 The search state is a plain struct:
 
@@ -847,8 +781,8 @@ The search state is a plain struct:
 \toprule
 field & type & meaning \\
 \midrule
-\texttt{cells[27]} & 32-bit & $M_{d,b}$ at index $3d+b$ \\
-\texttt{checked[27]} & 32-bit & $M_{d,b}$ as it was the last time the band rules ran on it (0 initially) \\
+\texttt{valueToBand[9][3]} & 32-bit & $M_{d,b}$ at \texttt{valueToBand[$d-1$][$b$]}: digit first, then band \\
+\texttt{checked[9][3]} & 32-bit & $M_{d,b}$ as it was the last time the band rules ran on it (0 initially) \\
 \texttt{unsolved[3]} & 32-bit & cells of each band not yet given a digit \\
 \texttt{openRows[9]} & 16-bit & per digit, 9 bits: rows ($3b+r$) where the digit is not yet placed \\
 \bottomrule
@@ -866,18 +800,21 @@ All tables are computed at compile time (\texttt{constexpr}) and total 8{,}548 b
 
 \begin{center}
 \small
-\begin{tabular}{llp{8.2cm}}
+\begin{tabular}{ll>{\raggedright\arraybackslash}p{8.2cm}}
 \toprule
 table & entries & contents \\
 \midrule
 \texttt{BOXES\_OF\_ROW} & 512 $\times$ 8 bit & for a 9-bit row, the boxes (3 bits) it has candidates in \\
-\texttt{MATCHABLE} & 512 $\times$ 16 bit & for a $3\times 3$ 0-1 matrix (bit $3i+j$), the union of the perfect matchings
-  it contains, i.e.\ its entries that lie on some perfect matching. Built by testing the 6 permutations \\
-\texttt{POSSIBLE\_CELLS} & 512 $\times$ 32 bit & for a mini-row matrix $A$ (bit $3r+k$), the band cells of the mini-rows
-  in \texttt{MATCHABLE}$[A]$ \\
+\texttt{PERMUTATION\_UNION} & 512 $\times$ 16 bit & for a $3\times 3$ 0-1 table of candidates (bit $3i+j$), the OR of the
+  permutations that fit inside it: each of the 6 permutations (3 bits, one per row and per column) whose three entries
+  are all 1 is ORed in, so the result is the table's entries that lie on some perfect matching; 0 if none fits \\
+\texttt{POSSIBLE\_CELLS} & 512 $\times$ 32 bit & for box candidates (bit $3r+k$): first
+  $\mathit{kept}=\texttt{PERMUTATION\_UNION}[\mathit{boxCandidates}]$, then each 1 of $\mathit{kept}$ widened to its triad's
+  3 cells, $111_2 \ll (9r+3k)$. The index only selects the entry; the cells come from $\mathit{kept}$ \\
 \texttt{ONE\_COLUMN\_BOXES} & 512 $\times$ 8 bit & for a band's column set, the boxes (3 bits) with exactly one column \\
-\texttt{SINGLE\_ROWS} & 4096 $\times$ 8 bit & for \texttt{MATCHABLE}$[A]$ and \texttt{ONE\_COLUMN\_BOXES}$[P]\ll 9$, the rows
-  (3 bits) down to one cell (\cref{lem:singlerows}) \\
+\texttt{SINGLE\_ROWS} & 4096 $\times$ 8 bit & for \texttt{PERMUTATION\_UNION}$[\mathit{boxCandidates}]$ and
+  \texttt{ONE\_COLUMN\_BOXES}$[\mathit{columns}]\ll 9$, the rows
+  (3 bits) down to one cell (\cref{lem:singlerows}); only 392 entries can be reached (\cref{sec:fifty}) \\
 \texttt{AFTER\_PLACING} & 27 $\times$ 32 bit & for a cell, the band minus the cell's row and box, plus the cell \\
 \texttt{OTHER\_BANDS\ldots} & 27 $\times$ 32 bit & for a cell, all cells of a band except the cell's column \\
 \texttt{BAND\_PEERS} & 27 $\times$ 32 bit & for a cell, its row and box within the band, the cell excluded \\
@@ -896,23 +833,26 @@ loop instead of being called as a function, which avoids the cost of a call.
 \caption{\textsc{UpdateBand}$_b(S, d)$: band rule, stack rule and row singles for digit $d$ in band $b$}
 \label{alg:band}
 \begin{algorithmic}[1]
-\State $M \gets S.\mathit{cells}[3d+b]$; \ $M_{\mathrm{old}} \gets S.\mathit{checked}[3d+b]$
-\State $A \gets \textsc{BoxesOfRow}[M \,\&\, 777_8] \mid \textsc{BoxesOfRow}[(M\gg 9)\,\&\,777_8]\ll 3 \mid
-  \textsc{BoxesOfRow}[M\gg 18]\ll 6$ \Comment{mini-row matrix}
-\State $M \gets M \,\&\, \textsc{PossibleCells}[A]$ \Comment{band rule}
-\If{$M = 0$} \Return \textbf{contradiction} \EndIf
-\State $S.\mathit{cells}[3d+b] \gets M$; \ $S.\mathit{checked}[3d+b] \gets M$
-\State $P \gets P(M)$
-\If{$P \ne P(M_{\mathrm{old}})$} \textsc{StackRule}$(S, d)$ \EndIf
-\State $R \gets \textsc{SingleRows}[\textsc{Matchable}[A] \mid \textsc{OneColumnBoxes}[P]\ll 9]$
-\State $N \gets R \,\&\, (S.\mathit{openRows}[d] \gg 3b) \,\&\, 7$ \Comment{rows newly down to one cell}
-\If{$N \ne 0$}
-  \State $C \gets M \,\&\, \textsc{RowsCells}[N]$ \Comment{the placed cells, one per row}
-  \State $M_{\mathrm{own}} \gets S.\mathit{cells}[3d+b]$ \Comment{as left by the stack rule}
-  \For{$e \gets 0$ \textbf{to} $8$} $S.\mathit{cells}[3e+b] \gets S.\mathit{cells}[3e+b] \,\&\, \lnot C$ \EndFor
-  \State $S.\mathit{cells}[3d+b] \gets M_{\mathrm{own}}$ \Comment{restore $d$'s own mask}
-  \State $S.\mathit{unsolved}[b] \gets S.\mathit{unsolved}[b] \,\&\, \lnot C$; \
-    $S.\mathit{openRows}[d] \gets S.\mathit{openRows}[d] \,\&\, \lnot(N\ll 3b)$
+\State $\mathit{bandCells} \gets S.\mathit{valueToBand}[d-1][b]$; \ $\mathit{lastChecked} \gets S.\mathit{checked}[d-1][b]$
+\State $\mathit{boxCandidates} \gets \textsc{BoxesOfRow}[\mathit{bandCells} \,\&\, 111\,111\,111_2]$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{BoxesOfRow}[(\mathit{bandCells}\gg 9)\,\&\,111\,111\,111_2]\ll 3$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{BoxesOfRow}[\mathit{bandCells}\gg 18]\ll 6$ \Comment{the $3\times 3$ matrix $A^{d,b}$}
+\State $\mathit{bandCells} \gets \mathit{bandCells} \,\&\, \textsc{PossibleCells}[\mathit{boxCandidates}]$ \Comment{band rule}
+\If{$\mathit{bandCells} = 0$} \Return \textbf{contradiction} \EndIf
+\State $S.\mathit{valueToBand}[d-1][b] \gets \mathit{bandCells}$; \ $S.\mathit{checked}[d-1][b] \gets \mathit{bandCells}$
+\State $\mathit{columns} \gets \mathrm{bandColumns}(\mathit{bandCells})$
+\If{$\mathit{columns} \ne \mathrm{bandColumns}(\mathit{lastChecked})$} \textsc{StackRule}$(S, d)$ \EndIf
+\State $\mathit{singleRows} \gets \textsc{SingleRows}[\textsc{PermutationUnion}[\mathit{boxCandidates}]$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid \textsc{OneColumnBoxes}[\mathit{columns}]\ll 9]$
+\State $\mathit{openRowsInBand} \gets (S.\mathit{openRows}[d-1] \gg 3b) \,\&\, 111_2$ \Comment{rows where $d$ is not placed yet}
+  \Statex \hspace{\algorithmicindent}$\mathit{newSingleRows} \gets \mathit{singleRows} \,\&\, \mathit{openRowsInBand}$
+\If{$\mathit{newSingleRows} \ne 0$}
+  \State $\mathit{placedCells} \gets \mathit{bandCells} \,\&\, \textsc{RowsCells}[\mathit{newSingleRows}]$ \Comment{one cell per new single row}
+  \State $\mathit{digitMaskNow} \gets S.\mathit{valueToBand}[d-1][b]$ \Comment{as left by the stack rule}
+  \For{$\mathit{other} \gets 0$ \textbf{to} $8$} $S.\mathit{valueToBand}[\mathit{other}][b] \gets S.\mathit{valueToBand}[\mathit{other}][b] \,\&\, \lnot\mathit{placedCells}$ \EndFor
+  \State $S.\mathit{valueToBand}[d-1][b] \gets \mathit{digitMaskNow}$ \Comment{give $d$ its mask back}
+  \State $S.\mathit{unsolved}[b] \gets S.\mathit{unsolved}[b] \,\&\, \lnot\mathit{placedCells}$
+  \Statex \hspace{\algorithmicindent}$S.\mathit{openRows}[d-1] \gets S.\mathit{openRows}[d-1] \,\&\, \lnot(\mathit{newSingleRows}\ll 3b)$
 \EndIf
 \State \Return \textbf{ok}
 \end{algorithmic}
@@ -920,46 +860,51 @@ loop instead of being called as a function, which avoids the cost of a call.
 \input{figs/alg_band}
 
 
-Line 2 turns the 27-bit mask into the $3\times 3$ mini-row matrix $A$ with three 512-entry lookups, one per row. Line 3
-applies the band rule of \cref{sec:rules}: \textsc{PossibleCells}$[A]$ is the set of cells of mini-rows on some perfect
-matching, so one AND removes every candidate of $d$ that no row-to-box arrangement can use. If no perfect matching
+The names follow the code. Line 2 turns the 27-bit mask $\mathit{bandCells}$ into $\mathit{boxCandidates}$, the
+$3\times 3$ matrix $A^{d,b}$ of \cref{sec:rules} (bit $3r+k$ for row $r$, box $k$), with three 512-entry lookups, one per
+row. Line 3 applies the band rule: \textsc{PossibleCells}$[\mathit{boxCandidates}]$ is the set of cells of triads on
+some perfect matching, so one AND removes every candidate of $d$ that no row-to-box arrangement can use. If no perfect matching
 exists the table entry is 0 and the band is a contradiction (line 4). Lines 6--7 run the stack rule only when the
 band's column set changed; because \texttt{checked} starts at 0, every band triggers it once on its first update. The
 stack rule may shrink this band again; since \texttt{checked} keeps the value from line 5, the band then differs from
 its checked value and is updated again in the next pass.
 
-Lines 8--9 find the rows that are down to one cell without examining the rows bit by bit:
+Line 8 finds the rows that are down to one cell without examining the rows bit by bit. \textsc{SingleRows} is
+built from its definition: for an index made of a 9-bit $\mathit{kept}$ and a 3-bit $\mathit{boxes}$, it sets the bit
+of row $r$ when row $r$ of $\mathit{kept}$ has exactly one 1, in some box $k$, and bit $k$ of $\mathit{boxes}$ is set.
+The lemma says that this gives the right rows.
 
 \begin{lemma}
 \label{lem:singlerows}
-Suppose the mask $M$ is nonzero after line 3, and let $A$ be the mini-row matrix computed in line 2. Then row $r$ of the
-band has exactly one candidate cell if and only if row $r$ has exactly one 1 in $\mathrm{supp}(A)$, say in box $k$, and
-box $k$ has exactly one column in $P$.
+In a call of \textsc{UpdateBand} that gets past line 4, the set $\mathit{singleRows}$ computed at line 8 is exactly the
+set of rows of the band that contain exactly one cell of $\mathit{bandCells}$, the mask left by line 3.
 \end{lemma}
 \begin{proof}
-Line 3 keeps every candidate cell of each mini-row in $\mathrm{supp}(A)$ and removes the others; each kept mini-row has
-at least one candidate, since its entry of $A$ is 1. So after line 3 the mini-row matrix of $M$ is $\mathrm{supp}(A)$,
-and row $r$ has candidates exactly in the boxes where row $r$ of $\mathrm{supp}(A)$ has a 1. Because $M\neq 0$,
-$\mathrm{supp}(A)\neq 0$, so by \cref{lem:idempotent} every row of it has at least one 1. If row $r$ has two or more, it
-has at least two candidate cells. If it has exactly one, in box $k$, then every perfect matching of $A$ sends $r$ to $k$
-(its entry in row $r$ must be a 1 of the support), so no other row $r'$ has $(r',k)$ in the support, and after line 3
-the candidates of box $k$ are exactly those of row $r$'s mini-row. Box $k$'s columns in $P$ are then the columns of
-those candidates, so the mini-row has exactly one candidate cell exactly when box $k$ has one column in $P$.
+Let $A$ be the matrix $\mathit{boxCandidates}$ of line 2, built from the mask before line 3. Line 8 reads
+\textsc{SingleRows} with $\mathit{kept}=\textsc{PermutationUnion}[A]=\mathrm{supp}(A)$ and
+$\mathit{boxes}=\textsc{OneColumnBoxes}[P(\mathit{bandCells})]$, the boxes with exactly one column in
+$P(\mathit{bandCells})$ (line 6).
+
+Line 3 keeps the cells of the triads in $\mathrm{supp}(A)$ and removes the others. Each triad in $\mathrm{supp}(A)$ has
+a 1 in $A$, so it contains a cell, which line 3 keeps. So the cells of row $r$ in $\mathit{bandCells}$ lie in the boxes
+$k$ with $\mathrm{supp}(A)_{rk}=1$, and each of these boxes holds at least one of them. As $\mathit{bandCells}\neq 0$
+(line 4), $\mathrm{supp}(A)\neq 0$, so by \cref{lem:idempotent} every row of $\mathrm{supp}(A)$ has at least one 1.
+
+If row $r$ of $\mathrm{supp}(A)$ has two or more 1s, row $r$ has at least two cells in $\mathit{bandCells}$, and
+\textsc{SingleRows} does not set its bit. If it has exactly one, in box $k$, then every perfect matching of $A$ pairs
+row $r$ with box $k$, since its entry in row $r$ is a 1 of $\mathrm{supp}(A)$. So no perfect matching uses $(r',k)$
+for a row $r'\neq r$, these entries are 0 in $\mathrm{supp}(A)$, and the only cells of $\mathit{bandCells}$ in box $k$
+are those of row $r$. The columns of box $k$ in $P(\mathit{bandCells})$ are therefore the columns of row $r$'s cells
+there, one column per cell. Hence row $r$ has exactly one cell exactly when box $k$ has exactly one column in
+$P(\mathit{bandCells})$, that is, when bit $k$ of $\mathit{boxes}$ is set, which is when \textsc{SingleRows} sets the
+bit of row $r$.
 \end{proof}
 
-\noindent So \textsc{SingleRows} is indexed by the 9-bit matchable matrix and the 3-bit set of one-column boxes, 4096
-entries. Line 9 keeps only rows where $d$ is not yet placed, so each placement is made once. Placing row singles (lines 10--16) clears the placed cells from all nine digits of the band in straight-line code and
+\noindent So \textsc{SingleRows} is indexed by the 9-bit permutation union $\mathrm{supp}(A)$ and the 3-bit set of one-column boxes, 4096
+entries. Line 9 keeps only rows where $d$ is not yet placed, so each placement is made once. Placing row singles (lines 10--15) clears the placed cells from all nine digits of the band in straight-line code and
 then restores $d$'s own mask, which is cheaper than testing \texttt{other != digit} in the loop. It restores the mask
-as it was just before the clearing, after the stack rule, not the band-rule output $M$: the stack rule may have removed
-more of this band, and restoring $M$ would put those candidates back (\cref{sec:pitfalls}).
-
-\paragraph{Worked example.} Let $d$ have candidates in columns $\{1,4\}$ of row 0, $\{0,2\}$ of row 1 and $\{3,8\}$
-of row 2, the configuration of \cref{fig:band}. Then $M=410005022_8$. The row lookups give box sets $\{0,1\}$,
-$\{0\}$ and $\{1,2\}$, so $A=110\,001\,011_2=395$. The only perfect matching is row 0 $\to$ box 1, row 1 $\to$ box 0,
-row 2 $\to$ box 2, so \textsc{Matchable}$[395]=100\,001\,010_2=266$, and line 3 leaves columns $\{4\}$, $\{0,2\}$ and
-$\{8\}$: $M=400005020_8$. The column set is $\{0,2,4,8\}$; box 0 has two columns and boxes 1 and 2 one each, so
-\textsc{OneColumnBoxes}$=110_2$, and \textsc{SingleRows} returns rows $\{0,2\}$: $d$ is placed in row 0, column 4 and
-row 2, column 8, and those two cells are removed from the other eight digits.
+as it was just before the clearing, after the stack rule, not the band-rule output $\mathit{bandCells}$: the stack rule
+may have removed more of this band, and restoring $\mathit{bandCells}$ would put those candidates back (\cref{sec:pitfalls}).
 
 \subsection{The stack rule}
 
@@ -967,24 +912,22 @@ row 2, column 8, and those two cells are removed from the other eight digits.
 \caption{\textsc{StackRule}$(S, d)$}
 \label{alg:stack}
 \begin{algorithmic}[1]
-\State $p_b \gets P(S.\mathit{cells}[3d+b])$ for $b = 0,1,2$ \Comment{9-bit column sets}
-\State $K_0, K_1, K_2 \gets 0$
-\For{$s \gets 0, 3, 6$} \Comment{the three stacks}
-  \State $m \gets (p_0\gg s \,\&\, 7) \mid (p_1\gg s \,\&\, 7)\ll 3 \mid (p_2\gg s \,\&\, 7)\ll 6$ \Comment{bands $\times$ columns}
-  \State $o \gets \textsc{Matchable}[m]$
-  \State $K_b \gets K_b \mid ((o \gg 3b)\,\&\,7)\ll s$ for $b = 0,1,2$
+\State $\mathit{columns}_b \gets \mathrm{bandColumns}(S.\mathit{valueToBand}[d-1][b])$ for $b = 0,1,2$ \Comment{9-bit column sets}
+\State $\mathit{keptColumns}_0, \mathit{keptColumns}_1, \mathit{keptColumns}_2 \gets 0$
+\For{$\mathit{shift} \gets 0, 3, 6$} \Comment{one pass per stack; $\mathit{shift}$ is its first column}
+  \State $\mathit{columnCandidates} \gets (\mathit{columns}_0\gg \mathit{shift} \,\&\, 111_2) \mid (\mathit{columns}_1\gg \mathit{shift} \,\&\, 111_2)\ll 3$
+  \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mid (\mathit{columns}_2\gg \mathit{shift} \,\&\, 111_2)\ll 6$ \Comment{the matrix $B^{d,s}$: bands $\times$ columns}
+  \State $\mathit{kept} \gets \textsc{PermutationUnion}[\mathit{columnCandidates}]$
+  \State $\mathit{keptColumns}_b \gets \mathit{keptColumns}_b \mid ((\mathit{kept} \gg 3b)\,\&\,111_2)\ll \mathit{shift}$ for $b = 0,1,2$
 \EndFor
-\State $S.\mathit{cells}[3d+b] \gets S.\mathit{cells}[3d+b] \,\&\, \mathrm{cols}(K_b)$ for $b = 0,1,2$
+\State $S.\mathit{valueToBand}[d-1][b] \gets S.\mathit{valueToBand}[d-1][b] \,\&\, \mathrm{columnCells}(\mathit{keptColumns}_b)$ for $b = 0,1,2$
 \end{algorithmic}
 \end{algorithm}
-\input{figs/alg_stack}
 
 
 \Cref{alg:stack} builds, for each stack, the $3\times 3$ matrix of bands by the stack's three columns and keeps the
-pairs on some perfect matching, reusing \textsc{Matchable}. It is branch-free: three lookups and a few dozen shifts,
-ANDs and ORs. For example, if in stack 0 the digit's columns are $\{0,1\}$ in band 0, $\{0\}$ in band 1 and
-$\{0,1,2\}$ in band 2, the matching forces band 1 $\to$ column 0, band 0 $\to$ column 1 and band 2 $\to$ column 2, and
-the rule removes three of the six pairs present. The locked-column step of JCZSolve is the case where a band has one column
+pairs on some perfect matching, reusing \textsc{PermutationUnion}. It is branch-free: three lookups and a few dozen shifts,
+ANDs and ORs. The locked-column step of JCZSolve is the case where a band has one column
 in a stack; we removed it, as the stack rule covers it and runs only when column sets change. Processing only the
 stacks whose columns changed produced the same tree but was 19\% slower, because the per-stack branches mispredict.
 
@@ -996,41 +939,41 @@ stacks whose columns changed produced the same tree but was 19\% slower, because
 \begin{algorithmic}[1]
 \Function{Update}{$S$}
   \Repeat
-    \State $\mathit{again} \gets \mathbf{false}$
-    \For{$d \gets 0$ \textbf{to} $8$}
+    \State $\mathit{ranAnyCheck} \gets \mathbf{false}$
+    \For{$d \gets 1$ \textbf{to} $9$}
       \For{$b \gets 0$ \textbf{to} $2$} \Comment{unrolled}
-        \If{$S.\mathit{cells}[3d+b] \ne S.\mathit{checked}[3d+b]$}
+        \If{$S.\mathit{valueToBand}[d-1][b] \ne S.\mathit{checked}[d-1][b]$}
           \If{\textsc{UpdateBand}$_b(S,d)$ fails} \Return \textbf{contradiction} \EndIf
-          \State $\mathit{again} \gets \mathbf{true}$
+          \State $\mathit{ranAnyCheck} \gets \mathbf{true}$
         \EndIf
       \EndFor
     \EndFor
-  \Until{\textbf{not} $\mathit{again}$}
+  \Until{\textbf{not} $\mathit{ranAnyCheck}$} \Comment{a pass ran no \textsc{UpdateBand}}
 \EndFunction
 \Function{Propagate}{$S$}
   \Loop
     \If{\textsc{Update}$(S)$ fails} \Return \textbf{contradiction} \EndIf
-    \State $\mathit{placed} \gets \mathbf{false}$; \ $\mathit{multi} \gets 0$
+    \State $\mathit{placed} \gets \mathbf{false}$; \ $\mathit{multiple} \gets 0$
     \For{$b \gets 0$ \textbf{to} $2$}
-      \State $u_1, u_2, u_3 \gets 0$
-      \For{$d \gets 0$ \textbf{to} $8$} \Comment{bit-sliced counters, saturating at 3}
-        \State $u_3 \gets u_3 \mid (u_2 \,\&\, M_{d,b})$; \ $u_2 \gets u_2 \mid (u_1 \,\&\, M_{d,b})$; \ $u_1 \gets u_1 \mid M_{d,b}$
+      \State $\mathit{once}, \mathit{twice}, \mathit{thrice} \gets 0$
+      \For{$d \gets 1$ \textbf{to} $9$} \Comment{bit-sliced counters, saturating at 3}
+        \State $\mathit{thrice} \gets \mathit{thrice} \mid (\mathit{twice} \,\&\, M_{d,b})$; \ $\mathit{twice} \gets \mathit{twice} \mid (\mathit{once} \,\&\, M_{d,b})$
+          \Statex \hspace{\algorithmicindent}\hspace{\algorithmicindent}\hspace{\algorithmicindent}\hspace{\algorithmicindent}$\mathit{once} \gets \mathit{once} \mid M_{d,b}$
       \EndFor
-      \If{$u_1 \ne 2^{27}-1$} \Return \textbf{contradiction} \Comment{a cell with no candidate} \EndIf
-      \State $\mathit{pairs}_b \gets u_2 \,\&\, \lnot u_3$; \ $\mathit{multi} \gets \mathit{multi} \mid u_2$
-      \For{each cell $x$ in $u_1 \,\&\, \lnot u_2 \,\&\, S.\mathit{unsolved}[b]$} \Comment{naked singles}
+      \If{$\mathit{once} \ne 2^{27}-1$} \Return \textbf{contradiction} \Comment{a cell with no candidate} \EndIf
+      \State $\mathit{pairs}_b \gets \mathit{twice} \,\&\, \lnot \mathit{thrice}$; \ $\mathit{multiple} \gets \mathit{multiple} \mid \mathit{twice}$
+      \For{each cell $x$ in $\mathit{once} \,\&\, \lnot \mathit{twice} \,\&\, S.\mathit{unsolved}[b]$} \Comment{naked singles}
         \State $d \gets$ the digit with $x \in M_{d,b}$; \textbf{if} none \Return \textbf{contradiction}
-        \State \textsc{PlaceNaked}$(S, d, b, x)$; \ $\mathit{placed} \gets \mathbf{true}$
+        \State \textsc{ClearPeers}$(S, d, b, x)$; \ $\mathit{placed} \gets \mathbf{true}$
       \EndFor
     \EndFor
     \If{\textbf{not} $\mathit{placed}$}
-      \State \Return ($\mathit{multi} = 0$ ? \textbf{solved} : \textbf{open})
+      \State \Return ($\mathit{multiple} \ne 0$ ? \textbf{open} : \textbf{solved})
     \EndIf
   \EndLoop
 \EndFunction
 \end{algorithmic}
 \end{algorithm}
-\input{figs/alg_propagate}
 
 
 \textsc{Update} (\cref{alg:propagate}) scans the 27 masks in digit order and runs \textsc{UpdateBand} on each one that
@@ -1040,12 +983,12 @@ because every rule only removes candidates, and removing a candidate never makes
 (the rules are \emph{monotone}), so any order of applying them reaches the same end state.
 
 \textsc{Propagate} then counts, for each band, how many digits each cell still admits. The three words
-$u_1,u_2,u_3$ are bit-sliced saturating counters: bit $x$ of $u_i$ is set when at least $i$ digits admit cell $x$, so
+$\mathit{once}$, $\mathit{twice}$ and $\mathit{thrice}$ are bit-sliced saturating counters: bit $x$ of each is set when at least one, two or three digits admit cell $x$, so
 27 cells are counted with five operations per digit (two ANDs and three ORs, all 27 cells at once). A cell in no digit's mask is a contradiction; cells with exactly
-two candidates ($u_2\,\&\,\lnot u_3$) are the branching candidates; cells with one candidate that are not yet marked
-solved are naked singles. A naked single of digit $d$ at cell $x$ is placed by \textsc{PlaceNaked}: $M_{d,b}$ is ANDed
+two candidates ($\mathit{twice}\,\&\,\lnot \mathit{thrice}$) are the branching candidates; cells with one candidate that are not yet marked
+solved are naked singles. A naked single of digit $d$ at cell $x$ is placed by \textsc{ClearPeers}: $M_{d,b}$ is ANDed
 with \textsc{AfterPlacing}$[x]$ (removing $d$ from the rest of $x$'s row and box), the other two bands of $d$ are ANDed
-with \textsc{OtherBands}$[x]$ (removing $d$ from $x$'s column), $x$ is cleared from \texttt{unsolved}, and $x$'s row
+with \textsc{OtherBandsAfterPlacing}$[x]$ (removing $d$ from $x$'s column), $x$ is cleared from \texttt{unsolved}, and $x$'s row
 is cleared from $d$'s \texttt{openRows}. The other digits need no work, because $x$ is not in their masks. If any
 naked single was placed, the loop repeats; otherwise \textsc{Propagate} returns \emph{solved} when no cell has two or
 more candidates, and \emph{open} with the two-candidate cells otherwise.
@@ -1056,31 +999,32 @@ more candidates, and \emph{open} with the two-candidate cells otherwise.
 \caption{\textsc{Search}$(S_t)$ at depth $t$}
 \label{alg:search}
 \begin{algorithmic}[1]
-\State $r \gets \textsc{Propagate}(S_t)$
-\If{$r = $ \textbf{contradiction}} \Return \EndIf
-\If{$r = $ \textbf{solved}} record the solution; \Return \EndIf
-\State $x \gets \arg\max_{x \in \mathit{pairs}} \textsc{PeerScore}(x)$, first in (band, bit) order among ties
+\State $\mathit{progress} \gets \textsc{Propagate}(S_t)$
+\If{$\mathit{progress} = $ \textbf{contradiction}} \Return \EndIf
+\If{$\mathit{progress} = $ \textbf{solved}} \textsc{Record}$(S_t)$; \Return \EndIf
+\State $x \gets \textsc{ChooseGuessCell}(S_t, \mathit{pairs})$ \Comment{$\arg\max_{x \in \mathit{pairs}} \textsc{PeerScore}(x)$}
 \If{$x$ exists}
-  \State $d_1 < d_2 \gets$ the two candidates of $x$
+  \State $d_1 < d_2 \gets$ the two candidates of $x$ \Comment{\textsc{NextValueIn}}
   \State $S_{t+1} \gets S_t$; \ \textsc{Place}$(S_{t+1}, d_1, x)$; \ \textsc{Search}$(S_{t+1})$
-  \If{fewer than $\mathit{limit}$ solutions found} \textsc{Place}$(S_t, d_2, x)$; \ \textsc{Search}$(S_t)$ \EndIf
+  \If{$\mathit{found} < \mathit{limit}$} \textsc{Place}$(S_t, d_2, x)$; \ \textsc{Search}$(S_t)$ \EndIf
 \Else
-  \State $x \gets$ an unsolved cell with the fewest candidates, highest \textsc{PeerScore} among ties
-  \For{each candidate $d$ of $x$, while fewer than $\mathit{limit}$ solutions found}
+  \State $x \gets \textsc{FewestCandidatesCell}(S_t)$ \Comment{fewest candidates, highest \textsc{PeerScore} among ties}
+  \For{each candidate $d$ of $x$, while $\mathit{found} < \mathit{limit}$}
     \State $S_{t+1} \gets S_t$; \ \textsc{Place}$(S_{t+1}, d, x)$; \ \textsc{Search}$(S_{t+1})$
   \EndFor
 \EndIf
 \end{algorithmic}
 \end{algorithm}
-\input{figs/alg_search}
 
 
 \Cref{alg:search} is a depth-first search that stops once \emph{limit} solutions are found; with limit 2 on a puzzle
 with one solution it explores the whole tree. The second child of a two-candidate branch reuses the parent's slot,
 since the parent is not needed afterwards. \textsc{Place} is the full placement used for guesses and clues: it removes
-the cell from all nine digits, restores it in $d$'s mask, then does what \textsc{PlaceNaked} does.
+the cell from all nine digits, gives it back to $d$, then calls \textsc{ClearPeers}. \textsc{Record} counts the solution
+in $\mathit{found}$ and writes the first one to the caller's grid.
 
-\textsc{PeerScore}$(x)$ for cell $x$ at index $i$ of band $b$ counts the unsolved cells among $x$'s 20 peers:
+\textsc{ChooseGuessCell} takes the two-candidate cell with the highest \textsc{PeerScore}, the first in (band, bit)
+order among ties. \textsc{PeerScore}$(x)$ for cell $x$ at bit $i$ of band $b$ counts the unsolved cells among $x$'s 20 peers:
 \[
 \mathrm{popcount}\bigl(U_b \,\&\, \textsc{BandPeers}[i]\bigr) + \mathrm{popcount}\bigl((U_{b'} \,\&\, \mathrm{col}_i) \mid
 (U_{b''} \,\&\, \mathrm{col}_i)\ll 32\bigr),
@@ -1109,7 +1053,7 @@ unique puzzles; bug (3) only under AddressSanitizer (a compiler option that repo
 out-of-bounds memory accesses) on puzzles with many solutions. (4) The row-single step originally restored the band's mask as the band rule had left it, putting back candidates
 the stack rule had just removed, so masks could grow. No test caught it: the stack rule usually ran again and
 removed them, and the solver agreed with tdoku everywhere. Writing the proofs of \cref{sec:proofs}, which rely on masks
-only shrinking, exposed it; it happened about 21 times per puzzle on the hardest set. The fix, restoring the mask as
+only shrinking ((I0) of \cref{lem:invariants}), exposed it; it happened about 21 times per puzzle on the hardest set. The fix, restoring the mask as
 the stack rule left it, changes no guess count and no timing beyond 0.5\%. Our correctness checks compare solution
 counts at limits 1, 2 and 3 with tdoku on all seven of tdoku's data sets, 709{,}764 puzzles including 10{,}000 with
 several solutions and 486{,}451 with none, compare with a naive counter on the repository's tests, and validate every
@@ -1152,6 +1096,9 @@ We measured each change by alternating builds and taking medians (\cref{sec:setu
 by 3\% or more on the hard sets. Forcing \textsc{UpdateBand} to be inlined saved 9\%: clang otherwise emitted a call
 for each band update. The table-driven row singles of \cref{lem:singlerows} saved 5.6\% over per-row bit arithmetic.
 Not skipping digits whose rows are all placed saved 4\%. Replacing locked columns entirely by the stack rule saved 3\%.
+The small helpers (\textsc{Place}, \textsc{ClearPeers}, \textsc{ChooseGuessCell}, \textsc{FewestCandidatesCell},
+\textsc{NextValueIn}, \textsc{PeerScore}) are forced inline as well, so splitting the code into named functions for
+readability changed the timing by less than 1\%.
 Three changes that looked promising were slower and were dropped: processing only the stacks that changed (19\%
 slower), batching the stack rule once per digit per pass (14\% slower, because eliminations applied immediately help
 the rest of the pass), and forcing the stack rule inline (1\% slower).
@@ -1162,190 +1109,359 @@ the rest of the pass), and forcing the stack rule inline (1\% slower).
 This section proves that FastBandSolver counts solutions exactly, up to the limit, returns a valid solution, stops,
 and never overruns its array of states. We refer to the code as described in \cref{sec:solver}.
 
-\paragraph{Model.} A state $S$ consists of the 27 masks $M_{d,b}$, their checked copies $K_{d,b}$ (\texttt{checked}),
-the unsolved masks $U_b$, and the open rows $O_d$. Its candidate set $C(S)$ is the set of pairs $(x,d)$ with $x$ a cell of
-band $b$ in $M_{d,b}$, and we write $\mathrm{Sol}(S)=\mathrm{Sol}(C(S))$. The bookkeeping fields $K$, $U$ and $O$ do not
-affect $C(S)$. Masks only ever lose bits after \textsc{Load}; we call this \emph{monotonicity}.
+\paragraph{Notation.} \Cref{tab:notation} collects the symbols used in this section. All of them were introduced in
+\cref{sec:rules,sec:solver}; the table states them once, in the form the proofs use.
+
+\begin{table}[h!]
+\centering
+\caption{Notation for \cref{sec:proofs}. Code names are given where they differ.}
+\label{tab:notation}
+\small
+\begin{tabular}{l>{\raggedright\arraybackslash}p{11.2cm}}
+\toprule
+symbol & meaning \\
+\midrule
+$d$, $b$, $s$ & a digit $1,\dots,9$ (index $d-1$ in the code), a band $0,1,2$, a stack $0,1,2$ \\
+$x$, $y$ & cells. A cell of band $b$ is also a bit $9r+c$ of a band mask, for row $r\in\{0,1,2\}$ of the band and
+  column $c\in\{0,\dots,8\}$ \\
+row, box, column & a unit of the full grid (\cref{sec:terms}). \emph{Row $r$ of band $b$} is grid row $3b+r$; \emph{box $k$ of band $b$} is grid box $3b+k$ \\
+triad $(r,k)$ & the three cells where row $r$ and box $k$ of a band meet \\
+$S$ & a search state, made of the four fields below \\
+$M_{d,b}$ & the cells of band $b$ where $d$ can still go (\texttt{valueToBand[$d-1$][$b$]}) \\
+$K_{d,b}$ & $M_{d,b}$ as it was when \textsc{UpdateBand} last ran on it, 0 before that (\texttt{checked}) \\
+$U_b$ & the cells of band $b$ not yet marked solved (\texttt{unsolved}) \\
+$O_d$ & 9 bits, bit $3b+r$ set while $d$ has not been placed in row $r$ of band $b$ (\texttt{openRows}) \\
+$C(S)$ & the candidate set of $S$: all pairs $(x,d)$ with $x$ a cell of some band $b$ and $x\in M_{d,b}$. A
+  \emph{candidate of $x$} is a digit $d$ with $(x,d)\in C(S)$. Only the masks $M$ determine $C(S)$; $K$, $U$ and
+  $O$ are bookkeeping \\
+$\mathrm{Sol}(S)$ & $\mathrm{Sol}(C(S))$: the solutions consistent with $C(S)$ (\cref{sec:rules}) \\
+sound & a removal of pairs from $C(S)$ is sound when it leaves $\mathrm{Sol}(S)$ unchanged \\
+$P(M)$ & the column set of a band mask: the columns $c$ with a cell of $M$ in column $c$ (\texttt{bandColumns}) \\
+$A^{d,b}$ & the $3\times 3$ 0-1 matrix of rows against boxes of band $b$: entry $(r,k)$ is 1 when triad $(r,k)$ meets
+  $M_{d,b}$ (\texttt{boxCandidates}) \\
+$B^{d,s}$ & the $3\times 3$ 0-1 matrix of bands against the columns of stack $s$: entry $(b,j)$ is 1 when column $3s+j$
+  is in $P(M_{d,b})$ (\texttt{columnCandidates}) \\
+$\mathrm{supp}(A)$ & the entries of $A$ that lie on some perfect matching (\textsc{PermutationUnion}$[A]$) \\
+$t$ & a slot of the array of 82 states; \textsc{Search} at depth $t$ works on slot $t$ \\
+$L$, $f$, $n$ & the solution limit (\texttt{limit}), the number of solutions found so far (\texttt{found}), and the
+  number of solutions that agree with the clues \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The steps that change candidates.} Besides \textsc{Load}, four steps remove pairs from $C(S)$:
+\begin{itemize}
+\item the \emph{band rule}, line 3 of \cref{alg:band};
+\item the \emph{stack rule}, \cref{alg:stack}, called from line 7 of \cref{alg:band};
+\item the \emph{row-single placement}, lines 10--15 of \cref{alg:band}: for each row $r$ in $\mathit{newSingleRows}$ it
+  takes the one cell of row $r$ in $\mathit{bandCells}$ (the mask as line 3 left it), removes that cell from the masks
+  of all nine digits, then gives $d$ back its mask as it was just before (line 14);
+\item the \emph{naked-single placement} in \textsc{Propagate}: for a cell $x$ of band $b$ found to have one candidate,
+  it finds that candidate $d$ and calls \textsc{ClearPeers}$(S,d,b,x)$, which ANDs $M_{d,b}$ with
+  \textsc{AfterPlacing}$[x]$ (the band without the rest of $x$'s row and box) and $d$'s masks in the other two bands
+  with \textsc{OtherBandsAfterPlacing}$[x]$ (those bands without $x$'s column).
+\end{itemize}
+\textsc{Place}$(S,d,x)$, used by \textsc{Load} and \textsc{Search}, removes $x$ from the masks of the eight other
+digits, sets bit $x$ of $M_{d,b}$, and calls \textsc{ClearPeers}. All of these steps also clear bits of $U$ and $O$,
+which does not change $C(S)$.
 
 \begin{lemma}[every step is sound]
 \label{lem:steps}
-Each removal of candidates made by \textsc{UpdateBand}, \textsc{StackRule} and the naked-single placement in
-\textsc{Propagate} is sound, and whenever \textsc{Update} or \textsc{Propagate} reports a contradiction,
-$\mathrm{Sol}(S)=\emptyset$. Hence \textsc{Propagate} either reports a contradiction for a state with no solutions, or
-returns a state with the same solutions as it started with.
+The band rule, the stack rule, the row-single placement and the naked-single placement are sound. Whenever
+\textsc{Update} or \textsc{Propagate} reports a contradiction, $\mathrm{Sol}(S)=\emptyset$. Hence \textsc{Propagate}
+either reports a contradiction for a state with no solutions, or returns a state with the same solutions it started
+with.
 \end{lemma}
 \begin{proof}
-Line 3 of \cref{alg:band} and \textsc{StackRule} are sound by \cref{lem:band,lem:stack}. The rows placed in lines
-10--15 have exactly one candidate cell by \cref{lem:singlerows}, so clearing that cell from the other eight digits
-is sound by \cref{lem:singles}(b). A naked single $x$ with candidate $d$ has $M_{d,b}$ ANDed with
-\textsc{AfterPlacing}$[x]$, which removes $d$ from the rest of $x$'s row and box, and the other two bands of $d$ with
-\textsc{OtherBands}$[x]$, which removes $d$ from the rest of $x$'s column (the column cells in $x$'s own band lie in
-$x$'s box); this is sound by \cref{lem:singles}(a). The contradictions are: a zero result of the band rule
-(\cref{lem:band}); a cell in no digit's mask; and a naked single whose digit has already been removed from it, again a
-cell with no candidate (\cref{lem:singles}(c)).
+Fix a solution $\sigma\in\mathrm{Sol}(S)$ at the moment of each step; a step is sound when $\sigma$ uses none of the
+pairs it removes.
+
+\emph{Band rule.} Line 3 keeps the cells of the triads in $\mathrm{supp}(A^{d,b})$ and removes the rest, which is sound
+by \cref{lem:band}.
+
+\emph{Stack rule.} For each stack $s$ it keeps, in each band $b$, the columns $3s+j$ with $\mathrm{supp}(B^{d,s})_{bj}=1$
+and removes $d$ from the rest of the stack's columns in that band, which is sound by \cref{lem:stack}.
+
+\emph{Row-single placement.} Let $r$ be a row in $\mathit{newSingleRows}$. By \cref{lem:singlerows}, row $r$ of band
+$b$ has exactly one cell $x$ in $\mathit{bandCells}$, and that is the cell the step takes. Between line 3 and line 13
+only the stack rule has run, and it only removes candidates, so at line 13 the cells of row $r$ in $M_{d,b}$ are $x$
+or none. By the row constraint $\sigma$ puts $d$ in some cell of row $r$, at a candidate, so if any solution exists,
+$\sigma(x)=d$, and the pairs $(x,d')$ with $d'\neq d$ that line 13 removes are unused. Line 14 restores $M_{d,b}$ to
+its value before line 13, so line 13 removes no pair of $d$ itself. If the stack rule had already removed $x$ from
+$M_{d,b}$, then $d$ has no candidate in row $r$, so $\mathrm{Sol}(S)=\emptyset$ and the removal is trivially sound;
+$x$ is then left with no candidate at all, which the next count in \textsc{Propagate} reports.
+
+\emph{Naked-single placement.} \textsc{Propagate} counts the candidates of the cells of band $b$ and then takes each
+cell $x$ of $U_b$ that had exactly one, $d$. Placements made earlier in the same loop only remove candidates, so when
+$x$ is reached its candidates are $d$ or none. If none is left the step reports a contradiction (see below).
+Otherwise $\sigma(x)=d$, and since a solution does not repeat $d$ in a unit, $\sigma$ puts $d$ in no other cell of
+$x$'s row, box or column. \textsc{AfterPlacing}$[x]$ removes $d$ from the rest of $x$'s row and box, and keeps $x$;
+\textsc{OtherBandsAfterPlacing}$[x]$ removes $d$ from $x$'s column in the other two bands. The cells of $x$'s column
+in its own band lie in $x$'s box, so every removed pair is $(y,d)$ with $y$ a peer of $x$, and unused.
+
+\emph{Contradictions.} \textsc{Update} reports one only at line 4 of \cref{alg:band}, when line 3 leaves the mask
+empty. Every triad in $\mathrm{supp}(A^{d,b})$ meets $M_{d,b}$, since its entry of $A^{d,b}$ is 1, so the mask is
+empty only when $\mathrm{supp}(A^{d,b})=0$, that is, when $A^{d,b}$ has no perfect matching, and then
+$\mathrm{Sol}(S)=\emptyset$ by \cref{lem:band}. \textsc{Propagate} reports one when some cell is in no mask
+($\mathit{once}\neq 2^{27}-1$) or when a naked single has lost its only candidate; in both cases some cell $x$ has no
+candidate, so no $\sigma$ can be consistent, since it would need $(x,\sigma(x))\in C(S)$.
+
+\textsc{Update} and \textsc{Propagate} change $C(S)$ only through these four steps, so the last sentence follows.
 \end{proof}
 
 \begin{lemma}[invariants]
 \label{lem:invariants}
-After \textsc{Load} succeeds, the following hold at every point of the solve.
+After \textsc{Load} has reset the state to all candidates, the following hold at every point of the solve, in every slot of the array.
 \begin{enumerate}
-\item[(I1)] A cell not in $U$ has at most one candidate.
-\item[(I2)] For each mask, once \textsc{UpdateBand} has run on it, $M_{d,b}\subseteq K_{d,b}$; before that,
-  $K_{d,b}=0$.
-\item[(I3)] If the bit of row $R$ in $O_d$ is clear, then $d$ has at most one candidate cell in row $R$, and that cell
-  has no other candidate.
+\item[(I0)] \emph{Masks only shrink:} no step adds a cell to any mask $M_{d,b}$.
+\item[(I1)] A cell of band $b$ that is not in $U_b$ has at most one candidate.
+\item[(I2)] Before \textsc{UpdateBand} first runs on the mask $M_{d,b}$, $K_{d,b}=0$; from then on,
+  $M_{d,b}\subseteq K_{d,b}$.
+\item[(I3)] If bit $3b+r$ of $O_d$ is clear, then $d$ has at most one candidate cell in row $r$ of band $b$, and that
+  cell has no candidate other than $d$.
 \end{enumerate}
 \end{lemma}
 \begin{proof}
-(I1) Cells leave $U$ only in \textsc{Place}, in a row-single placement and in a naked-single placement. \textsc{Place}
-removes every other digit from the cell, a row-single placement clears the cell from all nine digits and then restores $d$'s mask as it was just before, so
-the cell keeps at most $d$, and a naked single already has one candidate. By monotonicity the cell never gains candidates.
-(I2) \textsc{UpdateBand} sets $K_{d,b}$ to the current mask; afterwards the mask only shrinks and $K_{d,b}$ changes only
-at the next \textsc{UpdateBand} on the same mask. (I3) Row bits of $O_d$ are cleared by the same three placements, each
-of which leaves the placed cell $y$ with no candidate other than $d$ and removes $d$ from the rest of $y$'s row: a row
-single because the row had no other candidate, \textsc{Place} and a naked-single placement through
-\textsc{AfterPlacing}. Monotonicity preserves both properties.
+A guess copies a whole state into the next slot, which keeps all four properties, so it suffices to check every step
+that writes to a state.
+
+(I0) Every write to a mask ANDs it with something (line 5 of \cref{alg:band} stores $M_{d,b}$ ANDed with a table entry), except two. \textsc{Place}$(S,d,x)$, with $x$ in band $b$, first clears $x$ from
+the masks of all nine digits and then sets bit $x$ of $M_{d,b}$; this adds nothing because $x\in M_{d,b}$ whenever
+\textsc{Place} is called. \textsc{Load} calls it only after checking that $x\in M_{d,b}$, and returns failure
+otherwise. \textsc{Search} calls it with a digit returned by \textsc{NextValueIn} on the state in slot $t$, so with
+$x\in M_{d,b}$ at that moment, and slot $t$ does not change between that call and the \textsc{Place}: a call of
+\textsc{Search} on a slot writes only to that slot and calls \textsc{Search} only on that slot or the next, so
+everything the first child of a two-candidate branch does is in slots $t+1$ and above; and each child of the fallback
+starts from a fresh copy of slot $t$. The row-single placement sets $M_{d,b}$ at line 14 of \cref{alg:band} back to $\mathit{digitMaskNow}$, the
+value it had at line 12; in between, line 13 only cleared bits, so this undoes line 13 for $d$ and adds nothing new.
+
+(I1) The bits of $U_b$ are only ever cleared, and only by \textsc{ClearPeers} (called by \textsc{Place} and by the
+naked-single placement) and by line 15 of \cref{alg:band}. When \textsc{Place}$(S,d,x)$ clears $x$, it has just
+removed $x$ from the masks of the other eight digits, so $x$'s only candidate is $d$. When the naked-single placement
+clears $x$, $x$'s only candidate is $d$, or it has none (\cref{lem:steps}). When line 15 clears a cell $x$ of
+$\mathit{placedCells}$, line 13 has removed $x$ from all nine masks and line 14 has given $d$ its mask back, so $x$'s
+only possible candidate is $d$. After that, by (I0), $x$ gains no candidate.
+
+(I2) $K_{d,b}$ is 0 initially and is written only at line 5 of \cref{alg:band}, which sets $M_{d,b}$ and $K_{d,b}$ to
+the same value. From then until the next \textsc{UpdateBand} on the same mask, $K_{d,b}$ does not change and, by (I0),
+$M_{d,b}$ only shrinks, so $M_{d,b}\subseteq K_{d,b}$.
+
+(I3) The bits of $O_d$ are only ever cleared, and only by \textsc{ClearPeers} and by line 15 of \cref{alg:band}.
+\textsc{ClearPeers}$(S,d,b,x)$ clears the bit of $x$'s row. At that moment $x$ has no candidate other than $d$ (as in
+(I1)), and \textsc{ClearPeers} itself ANDs $M_{d,b}$ with \textsc{AfterPlacing}$[x]$, which removes $d$ from every
+other cell of $x$'s row; so $d$'s only possible candidate cell in the row is $x$. Line 15 clears the bits of the rows
+in $\mathit{newSingleRows}$; for each such row, the only cell of $M_{d,b}$ in it is the placed cell $x$, or none
+(\cref{lem:steps}), and lines 13--14 leave $x$ with no candidate other than $d$. After that, by (I0), the row gains no
+candidate cell for $d$ and $x$ gains no candidate.
 \end{proof}
 
 \begin{lemma}[termination and depth]
 \label{lem:termination}
-\textsc{Update}, \textsc{Propagate} and \textsc{Search} terminate. If \textsc{Search} runs on the state in slot $t$ of
-the array, then the unsolved cells number at most $81-t$, and a child is written to slot $t+1$ only when $t\le 80$. So
-the 82 slots suffice.
+\textsc{Update}, \textsc{Propagate} and \textsc{Search} terminate. When \textsc{Search} is called on slot $t$, the
+state there has at most $81-t$ unsolved cells (cells in $U_0$, $U_1$ or $U_2$); it writes a child to slot $t+1$ only
+when $t\le 80$. So the 82 slots, numbered 0 to 81, suffice.
 \end{lemma}
 \begin{proof}
-\emph{Update.} Let $N$ be the number of masks with $M_{d,b}\neq K_{d,b}$, and consider the pair
-$\Phi=(|C(S)|, N)$ ordered lexicographically. Each call of \textsc{UpdateBand} strictly decreases $\Phi$: if it
-removes any candidate, $|C(S)|$ decreases; otherwise every mask is unchanged, and the mask it was called on, which had
-$M\neq K$, now has $K=M$, so $N$ decreases by one. Since $|C(S)|\le 729$ and $N\le 27$, there are finitely many calls,
-and every pass of \textsc{Update} except the last makes at least one.
-\emph{Propagate.} Each repetition of its loop follows a naked-single placement, which removes a cell of $U$ (the loop
-only visits cells in $U$), and $U$ never grows; so there are at most 81 repetitions.
-\emph{Search.} \textsc{Place} removes the chosen cell from $U$. The cell is in $U$: a two-candidate cell by (I1), and a
-fallback cell because it is chosen from $U$. Slot $t+1$ is filled from slot $t$ by \textsc{Place}, so by induction the
-state in slot $t$ has at most $81-t$ unsolved cells; the second child of a two-candidate branch reuses slot $t$ after
-another \textsc{Place}, which only lowers the count. A branch needs an unsolved cell, so it happens only when
-$81-t\ge 1$. The search tree has depth at most 81 and branching at most 9, so it is finite.
-\end{proof}
+\textsc{UpdateBand} has no loop other than its fixed loop over nine digits, so every call of it ends.
 
-The next lemma handles a corner case of the update loop: a mask that is zero from the start equals its checked copy
-$K=0$, so the loop never visits it.
+\emph{Update.} Let $N$ be the number of masks with $M_{d,b}\neq K_{d,b}$, and compare the pairs $\Phi=(|C(S)|, N)$
+lexicographically: first by $|C(S)|$, then by $N$. Each call of \textsc{UpdateBand} makes $\Phi$ strictly smaller. If
+the call removes a candidate, $|C(S)|$ falls, and by (I0) no step adds one. If it removes none, no mask changes, and
+the only other write is to $K_{d,b}$ of the mask it was called on: that mask had $M_{d,b}\neq K_{d,b}$ (otherwise
+\textsc{Update} would not have called it) and now has $K_{d,b}=M_{d,b}$, so $N$ falls by one. As $0\le|C(S)|\le 729$ and
+$0\le N\le 27$, there are finitely many calls. Each pass of \textsc{Update} makes at most 27 calls, and every pass
+except the last makes at least one, so there are finitely many passes.
 
-\begin{lemma}[no empty masks]
-\label{lem:nonzero}
-If \textsc{Update} returns without a contradiction, every mask is nonzero and has been updated at least once.
-\end{lemma}
-\begin{proof}
-A mask that is nonzero after \textsc{Load} has $K=0\neq M$, so it is updated. If a mask becomes zero after being
-updated, then by (I2) it differs from $K$, so it is updated again, and the band rule of the zero mask gives zero: a
-contradiction. It remains to consider a mask $M_{d,b}$ that is zero right after \textsc{Load}. Suppose some other mask
-of $d$ is nonzero. On its first update its column set differs from that of $K=0$, so \textsc{StackRule}$(d)$ runs; band
-$b$ has no columns, so in every stack row $b$ of $B^{d,s}$ is zero, no perfect matching exists, and every mask of $d$
-is cleared. The updated mask then differs from its checked copy and its next update reports a contradiction. Suppose
-instead all three masks of $d$ are zero after \textsc{Load}. \textsc{Load} removes $d$ from a cell only when the cell
-holds a clue other than $d$, or a peer holds the clue $d$; and \textsc{Place} keeps $d$ at a cell holding the clue $d$.
-So there is no clue $d$, and every cell holds a clue. Then 81 clues use at most 8 digits, some row repeats a digit, and
-\textsc{Load} fails, a contradiction.
+\emph{Propagate.} Its loop repeats only when $\mathit{placed}$ is true, that is, after at least one naked-single
+placement in the pass. That placement took a cell $x$ of $U_b$ (the singles are drawn from
+$\mathit{once}\,\&\,\lnot\mathit{twice}\,\&\,U_b$, and the only cells cleared from $U_b$ in between are other singles)
+and \textsc{ClearPeers} cleared it from $U_b$. No step adds a cell to $U$, so the number of unsolved cells falls by at
+least one per repetition, and there are at most 81 repetitions.
+
+\emph{Search.} Write $|U|$ for the number of unsolved cells of a state. We show that every recursive call of
+\textsc{Search} is made on a state with smaller $|U|$ than the state its caller started with. A call branches only
+after \textsc{Propagate} returned \emph{open}, so some cell has two or more candidates ($\mathit{multiple}\neq 0$), and
+by (I1) every such cell is unsolved. The branch cell $x$ is unsolved: a two-candidate cell by (I1), and a fallback cell
+because \textsc{FewestCandidatesCell} looks only at the cells of $U$. Each child is the parent's state, which
+\textsc{Propagate} has not made larger in $|U|$, followed by \textsc{Place} on $x$, which clears $x$ from $U$. This
+holds for the children in slot $t+1$ and for the second child of a two-candidate branch, which reuses slot $t$. So
+along any chain of recursive calls $|U|$ strictly falls, the chain has at most 82 calls, and since each call makes at
+most nine recursive calls directly, the whole search is finite.
+
+\emph{Slots.} The call on slot 0 starts with $|U|\le 81$. A child in slot $t+1$ starts with at most $|U|-1\le 81-(t+1)$
+unsolved cells, and a child in slot $t$ with fewer than its caller, so by induction a call on slot $t$ starts with
+$|U|\le 81-t$. A call writes to slot $t+1$ only when it branches, which needs an unsolved cell, so $1\le 81-t$, that
+is, $t\le 80$.
 \end{proof}
 
 \begin{lemma}[the fixed point]
 \label{lem:fixedpoint}
 Suppose \textsc{Propagate} returns \emph{open} or \emph{solved}. Then in the returned state:
 \begin{enumerate}
-\item[(a)] every mask $M_{d,b}$ is nonzero and the band rule leaves it unchanged, so $A^{d,b}$ has a perfect matching
-  and $d$ has a candidate in every row and every box of band $b$;
-\item[(b)] for every digit $d$ and stack $s$, $\mathrm{supp}(B^{d,s})=B^{d,s}\neq 0$, so $d$ has a candidate in every
-  column of stack $s$;
-\item[(c)] if $d$ has exactly one candidate cell $x$ in some row, then $d$ is the only candidate of $x$.
+\item[(a)] every mask equals its checked copy, $M_{d,b}=K_{d,b}$;
+\item[(b)] if $M_{d,b}\neq 0$, then $\mathrm{supp}(A^{d,b})=A^{d,b}\neq 0$: every 1 of $A^{d,b}$ lies on a perfect
+  matching, and $d$ has a candidate in every row and every box of band $b$;
+\item[(c)] if the three masks of $d$ are all nonzero, then $\mathrm{supp}(B^{d,s})=B^{d,s}\neq 0$ for every stack $s$:
+  every 1 of $B^{d,s}$ lies on a perfect matching, and $d$ has a candidate in every column;
+\item[(d)] if $d$ has exactly one candidate cell $x$ in some row, then $d$ is the only candidate of $x$;
+\item[(e)] if the result is \emph{solved}, every mask is nonzero.
 \end{enumerate}
 \end{lemma}
 \begin{proof}
-\textsc{Propagate} returns after an \textsc{Update} that succeeded and a count that placed nothing, so no mask changed
-after the last pass of \textsc{Update}, and in that pass no \textsc{UpdateBand} ran: $M=K$ for every mask.
+(a) \textsc{Propagate} returns right after an \textsc{Update} that succeeded and a count that placed nothing, so no
+mask changed after the last pass of that \textsc{Update}. That pass ran no \textsc{UpdateBand}, so it found
+$M_{d,b}=K_{d,b}$ for every mask.
 
-(a) By \cref{lem:nonzero} every mask is nonzero and was updated. Consider the last \textsc{UpdateBand} on
-$M_{d,b}$. It set $K$ to $M' = M\,\&\,\textsc{PossibleCells}[A]$, and since $M=K$ at the end and masks only shrink, the
-mask was $M'$ from then on. The mini-row matrix of $M'$ is $\mathrm{supp}(A)$ (proof of \cref{lem:singlerows}), so
-applying the band rule again keeps the mini-rows of $\mathrm{supp}(\mathrm{supp}(A))=\mathrm{supp}(A)$
-(\cref{lem:idempotent}), that is, all of $M'$. As $M'\neq 0$, $\mathrm{supp}(A)\neq 0$ has a 1 in every row and column,
-so $d$ has a candidate in every row and box of the band.
+\emph{The last update of a mask.} Let $M_{d,b}\neq 0$ at the end. By (a), $K_{d,b}\neq 0$, so by (I2)
+\textsc{UpdateBand} has run on this mask; consider the last such call. At its line 5 it set $M_{d,b}$ and $K_{d,b}$ to
+$\mathit{bandCells}$, and $K_{d,b}$ did not change afterwards. From then on $M_{d,b}\subseteq K_{d,b}$ by (I2), $M_{d,b}$
+only shrinks by (I0), and $M_{d,b}=K_{d,b}$ at the end, so $M_{d,b}$ stayed equal to $\mathit{bandCells}$ from that line 5
+to the end.
 
-(b) Fix $d$. We first show: whenever a column set $P(M_{d,b})$ changes, \textsc{StackRule}$(d)$ runs afterwards. If the
-change is made by the band rule inside \textsc{UpdateBand} on $M_{d,b}$, then the new column set is a proper subset of
-$P(K)$ for the old $K$ (by (I2), or because $K=0$), so the comparison in line 7 differs and the stack rule runs in the
-same call. If the change is made anywhere else, then afterwards $M_{d,b}\neq K_{d,b}$, so \textsc{UpdateBand} runs on
-it again before \textsc{Update} returns, and in that call the column set is a proper subset of $P(K)$, so the stack
-rule runs. The first update of each mask counts as a change, since it compares with $P(0)=0$ and a nonzero mask has
-$P(M)\neq 0$. Now let $t$ be the last
-time any column set of $d$ changes. The stack rule runs after $t$, and that run changes no column set, so in every
-stack it found $\mathrm{supp}(B^{d,s})=B^{d,s}$ for the final column sets. By (a), each box of the stack has a candidate
-of $d$, so every row of $B^{d,s}$ is nonzero, $B^{d,s}\neq 0$, and by \cref{lem:idempotent} it has a 1 in every
-column.
+(b) In that last call let $A$ be the matrix of line 2, so that line 3 set $\mathit{bandCells}$ to the cells of
+$M_{d,b}$ lying in triads of $\mathrm{supp}(A)$. Each such triad has a 1 in $A$, so it contains a cell of $M_{d,b}$,
+which line 3 keeps; hence the triads that meet $\mathit{bandCells}$ are exactly those of $\mathrm{supp}(A)$, and the
+final mask has $A^{d,b}=\mathrm{supp}(A)$. By \cref{lem:idempotent},
+$\mathrm{supp}(A^{d,b})=\mathrm{supp}(\mathrm{supp}(A))=\mathrm{supp}(A)=A^{d,b}$. It is nonzero because the mask is,
+so by \cref{lem:idempotent} it has a 1 in every row and every column: $d$ has a candidate in every row and every box
+of the band.
 
-(c) Let $x$ be in band $b$. Consider the last \textsc{UpdateBand} on $M_{d,b}$; as in (a), the mask did not change after
-it, so its row-single step saw the final mask, and by \cref{lem:singlerows} it found the row of $x$ to be single. If the
-row was open, the step cleared $x$ from the other digits. If not, (I3) applies: $d$ has one candidate cell in the row,
-which is $x$, and $x$ has no other candidate. By monotonicity this still holds at the end.
+(c) Fix $d$ with three nonzero masks, and one of them, $M_{d,b}$. Number the calls of \textsc{UpdateBand} on it
+$1,\dots,k$, write $K_i$ for the value it gave $K_{d,b}$ at line 5, and set $K_0=0$. Call $i$ runs
+\textsc{StackRule}$(d)$ at line 7 exactly when $P(K_i)\neq P(K_{i-1})$, since $\mathit{lastChecked}=K_{i-1}$ and
+$\mathit{bandCells}=K_i$. As $K_k\neq 0$ and $P(K_0)=0$, some call does; let $i^*$ be the last one. Then
+$P(K_{i^*})=P(K_{i^*+1})=\dots=P(K_k)$. Between line 5 of call $i$ and line 5 of call $i+1$ the mask lies between
+$K_{i+1}$ and $K_i$ (by (I0) and (I2)), and after call $k$ it equals $K_k$, so from line 5 of call $i^*$ to the end the
+column set $P(M_{d,b})$ never changes; and call $i^*$ runs \textsc{StackRule}$(d)$ after that line 5.
+
+Now let $\tau$ be the last run of \textsc{StackRule}$(d)$ in the whole solve. By the previous paragraph, applied to
+each of the three masks, $\tau$ comes after the moment from which each column set of $d$ stays fixed. So $\tau$ reads
+the final column sets, and its matrices are the final $B^{d,s}$; and $\tau$ changes no column set, so for each stack
+$s$ and band $b$ the kept columns $\mathrm{supp}(B^{d,s})$ include every column of row $b$ of $B^{d,s}$. Since
+$\mathrm{supp}(B^{d,s})\le B^{d,s}$ entrywise, $\mathrm{supp}(B^{d,s})=B^{d,s}$. By (b) the band of each mask has a
+candidate of $d$ in every box, and the box of band $b$ in stack $s$ lies in the stack's columns, so every row of
+$B^{d,s}$ is nonzero; hence $B^{d,s}\neq 0$, and by \cref{lem:idempotent} it has a 1 in every column.
+
+(d) Let $x$ be in row $r$ of band $b$; then $M_{d,b}\neq 0$. If bit $3b+r$ of $O_d$ is clear, (I3) gives the claim
+directly. Otherwise the bit was set throughout, so in the last call of \textsc{UpdateBand} on $M_{d,b}$ row $r$ was
+open. That call's $\mathit{bandCells}$ is the final mask, in which row $r$ has exactly one cell, $x$; so by
+\cref{lem:singlerows} row $r$ is in $\mathit{singleRows}$ and hence in $\mathit{newSingleRows}$, and lines 13--14
+removed $x$ from the masks of the other eight digits. By (I0) $x$ never regains them.
+
+(e) For \emph{solved}, $\mathit{twice}=0$ and $\mathit{once}=2^{27}-1$ in every band, so every cell has exactly one
+candidate, and since the count placed nothing, no cell of $U$ had one: $U$ is empty. We show that no digit $d$ is the
+candidate of two cells $x\neq y$ of the same row $r$ of band $b$. The cell $x$ left $U$ in one of the two ways listed in
+the proof of (I1). If \textsc{ClearPeers}$(S,d',b,x)$ removed it, then $x$'s only candidate was $d'$ at that moment, so
+$d'=d$ by (I0), and \textsc{ClearPeers} removed $d$ from $y$ through \textsc{AfterPlacing}$[x]$. If line 15 of
+\cref{alg:band} removed it for a row single of some digit $d'$, then lines 13--14 left $x$ only $d'$, so again $d'=d$,
+and row $r$ of $M_{d,b}$ held only $x$ at that moment (\cref{lem:singlerows}), so $y$ had already lost $d$. Either way
+$y$ lost $d$ for good by (I0), a contradiction. So the nine cells of each row hold nine different digits, every digit
+has a cell in every row, and no mask is zero.
 \end{proof}
 
 \begin{theorem}[correctness]
 \label{thm:correct}
-For every input grid, \textsc{CountSolutions} with limit $L\ge 1$ returns $\min(L, n)$, where $n$ is the number of
-solutions that agree with the clues; \textsc{Solve} returns true exactly when $n\ge 1$, and then outputs such a
-solution. Both terminate and use at most 82 states.
+Let $n$ be the number of solutions that agree with the clues of the input grid. \textsc{CountSolutions} with limit
+$L\ge 1$ returns $\min(L, n)$. \textsc{Solve} returns true exactly when $n\ge 1$, and then writes one of those
+solutions to the output grid. Both terminate and use at most 82 states.
 \end{theorem}
 \begin{proof}
-\emph{Load.} \textsc{Load} checks each clue $(x,d)$ against the candidates and then places it. A pair $(x,d)$ is removed
-before $x$'s clue is placed only by the placement of an earlier clue $d$ at a peer of $x$, since \textsc{Place} removes
-other digits only from its own cell. So the check fails exactly when two clues repeat a digit in a unit, and then
-$n=0$. Otherwise, the placements remove only pairs that no solution agreeing with the clues can use, and keep every
-clue, so $\mathrm{Sol}(S_0)$ is exactly the set of solutions that agree with the clues.
+\emph{What \textsc{Place} removes.} For a cell $x$ and a digit $d$, let $R(x,d)$ be the pairs $(x,e)$ with $e\neq d$
+together with the pairs $(y,d)$ with $y$ a peer of $x$. \textsc{Place}$(S,d,x)$ removes from $C(S)$ exactly the pairs
+of $R(x,d)$ that are present: it removes $x$ from the masks of the other eight digits, and \textsc{ClearPeers} removes
+$d$ from the rest of $x$'s row and box (\textsc{AfterPlacing}$[x]$) and from $x$'s column in the other two bands
+(\textsc{OtherBandsAfterPlacing}$[x]$); the cells of $x$'s column in its own band are in its box. By (I0) it adds no
+pair. A solution $\sigma$ uses no pair of $R(x,d)$ exactly when $\sigma(x)=d$: if $\sigma(x)=d$ it uses $(x,d)$, which
+is not in $R(x,d)$, and puts $d$ in no peer of $x$; if $\sigma(x)=e\neq d$ it uses $(x,e)\in R(x,d)$. Hence
+\[
+\mathrm{Sol}(\textsc{Place}(S,d,x))=\{\sigma\in\mathrm{Sol}(S):\sigma(x)=d\}. \tag{$*$}
+\]
 
-\emph{Solved states.} Suppose \textsc{Propagate} returns \emph{solved}. Every cell is in some mask and none is in two,
-so each cell has exactly one candidate; let $G$ be the grid they form. By \cref{lem:fixedpoint}(a) and (b), every digit
-has a candidate in every row, column and box. A unit has nine cells, each with one candidate, and each of the nine
-digits appears among them at least once, so each appears exactly once: $G$ is a solution. Every consistent solution
-must equal $G$, so $\mathrm{Sol}(S)=\{G\}$.
+\emph{Load.} \textsc{Load} starts from the state with every pair as a candidate, so $\mathrm{Sol}$ is the set of all
+solutions. It takes the clues in cell order; for a clue $d$ at cell $y$, it fails if $(y,d)$ has already been removed,
+and otherwise calls \textsc{Place}$(S,d,y)$. Each cell holds at most one clue, so $(y,d)$ can have been removed only
+by an earlier clue $d$ at a peer of $y$. So \textsc{Load} fails exactly when two clues repeat a digit in a unit, and
+then no solution agrees with the clues: $n=0$. Otherwise, by $(*)$ applied once per clue, the state $S_0$ it returns
+has $\mathrm{Sol}(S_0)$ equal to the set of solutions that agree with the clues, so $|\mathrm{Sol}(S_0)|=n$.
 
-\emph{Branches.} At an \emph{open} state, the chosen cell $x$ has $m\ge 2$ candidates: two for a two-candidate cell, and
-for the fallback no unsolved cell has one (it would be a naked single) or none (a contradiction). For each candidate
-$d$, \textsc{Place}$(d, x)$ removes the other digits from $x$ and $d$ from the peers of $x$, which is exactly the set of
-pairs a solution with $\sigma(x)=d$ cannot use. So the children's solution sets are $\{\sigma\in\mathrm{Sol}(S):
-\sigma(x)=d\}$, which partition $\mathrm{Sol}(S)$.
+\emph{Solved states.} Suppose \textsc{Propagate} returns \emph{solved}. Then $\mathit{once}=2^{27}-1$ and
+$\mathit{twice}=0$ in every band, so every cell has exactly one candidate; let $G$ be the grid that puts each cell's
+candidate in it. By \cref{lem:fixedpoint}(e) every mask is nonzero, so by \cref{lem:fixedpoint}(b) and (c) every digit
+has a candidate in every row, every box and every column. A unit has nine cells, each with one candidate, and each of
+the nine digits is among them, so each digit appears exactly once: $G$ is a solution. It uses only pairs of $C(S)$, so
+$G\in\mathrm{Sol}(S)$; and any $\sigma\in\mathrm{Sol}(S)$ must give each cell its only candidate, so
+$\mathrm{Sol}(S)=\{G\}$.
 
-\emph{Counting.} We show by induction over the (finite) search tree that \textsc{Search} on a state $S$, entered with
-$f<L$ solutions found, leaves $\min(L, f+|\mathrm{Sol}(S)|)$ found. By \cref{lem:steps}, \textsc{Propagate} either
-returns a contradiction with $\mathrm{Sol}(S)=\emptyset$, or preserves $\mathrm{Sol}(S)$. A solved state records one
-solution, $|\mathrm{Sol}(S)|=1$ and $f+1\le L$. At a branch the children are searched in turn while fewer than $L$
-solutions have been found; by the induction hypothesis each adds its solutions up to the limit, and the solution sets
-are disjoint, so the total is $\min(L, f+\sum_d|\mathrm{Sol}_d|)=\min(L, f+|\mathrm{Sol}(S)|)$. For the second child of a
-two-candidate branch the parent's own slot is reused after \textsc{Propagate}, which did not change
-$\mathrm{Sol}(S)$. Applied to the root this gives $\min(L,n)$. \textsc{Record} copies out the first solution found,
-which is a solution by the previous paragraph, so \textsc{Solve} (limit 1) is correct. Termination and the bound of 82
-states are \cref{lem:termination}.
+\emph{Branches.} Suppose \textsc{Propagate} returns \emph{open}. Every cell has a candidate
+($\mathit{once}=2^{27}-1$), no unsolved cell has exactly one (it would have been placed as a naked single), and some
+cell has two or more ($\mathit{multiple}\neq 0$), which is unsolved by (I1). \textsc{Search} picks an unsolved cell
+$x$: a cell of $\mathit{pairs}$, with exactly two candidates, or else the cell \textsc{FewestCandidatesCell} returns,
+with two or more. It then calls \textsc{Search} on one child per candidate $d$ of $x$, in increasing order of $d$,
+each child being \textsc{Place}$(S,d,x)$; the children of the fallback, and the first child of a two-candidate branch,
+are copies in slot $t+1$, and the second child of a two-candidate branch is slot $t$ itself, which is unchanged since
+\textsc{Propagate} returned (proof of \cref{lem:invariants}). Every $\sigma\in\mathrm{Sol}(S)$ gives $x$ one of its
+candidates, so by $(*)$ the children's solution sets partition $\mathrm{Sol}(S)$.
+
+\emph{Counting.} We show that if \textsc{Search} is called on a state $S$ while $\mathit{found}=f<L$, it returns with
+$\mathit{found}=\min(L, f+|\mathrm{Sol}(S)|)$. The recursion is finite (\cref{lem:termination}), so we may assume the
+claim for every call that this one makes. By \cref{lem:steps}, \textsc{Propagate} either reports a contradiction, and
+then $\mathrm{Sol}(S)=\emptyset$ and \textsc{Search} returns with $\mathit{found}=f$, or keeps $\mathrm{Sol}(S)$
+unchanged. If it returns \emph{solved}, $|\mathrm{Sol}(S)|=1$ and \textsc{Record} adds one: $f+1\le L$. If it returns
+\emph{open}, let the children be $S_1,\dots,S_m$ in the order they are searched, with solution sets of sizes
+$n_1,\dots,n_m$ summing to $|\mathrm{Sol}(S)|$. \textsc{Search} calls the next child only while $\mathit{found}<L$
+(line 8 of \cref{alg:search} for the second child of a two-candidate branch, the loop condition for the fallback). By
+the claim for the children, after child $i$ either $\mathit{found}=L$ and the search stops, which is
+$\min(L, f+|\mathrm{Sol}(S)|)$ because $f+n_1+\dots+n_i\ge L$; or $\mathit{found}=f+n_1+\dots+n_i<L$ and the next child
+starts with fewer than $L$ found. After the last child, $\mathit{found}=\min(L, f+n_1+\dots+n_m)$.
+
+\emph{The two entry points.} Both set $\mathit{found}=0$ and $\mathit{limit}=L$ and, if \textsc{Load} succeeds, call
+\textsc{Search} on $S_0$; if it fails, $n=0$ and $\mathit{found}$ stays 0. By the claim, $\mathit{found}=\min(L,n)$ at
+the end, which \textsc{CountSolutions} returns. \textsc{Solve} uses $L=1$ and returns whether $\mathit{found}>0$, that
+is, whether $n\ge 1$. Its single call of \textsc{Record} writes the grid $G$ of a solved state $S$ to the output (each
+cell gets the digit whose mask contains it). Every step from $S_0$ to $S$ only removes candidates, so
+$G\in\mathrm{Sol}(S)\subseteq\mathrm{Sol}(S_0)$: $G$ agrees with the clues. Termination and the bound of 82 states are
+\cref{lem:termination}.
 \end{proof}
 
 \begin{proposition}[box and column hidden singles are redundant]
 \label{prop:hidden}
-In a state returned by \textsc{Propagate} as open or solved, if digit $d$ has exactly one candidate cell $x$ in some box
-or some column, then $x$ is also $d$'s only candidate cell in its row, and $d$ is the only candidate of $x$. So adding
-rules for hidden singles in boxes and columns would never remove a candidate.
+Let $S$ be a state returned by \textsc{Propagate} as \emph{open} or \emph{solved}, and $d$ a digit.
+\begin{enumerate}
+\item[(a)] If $d$ has exactly one candidate cell $x$ in some box, then $x$ is also $d$'s only candidate cell in its
+  row, and $d$ is the only candidate of $x$.
+\item[(b)] If the three masks of $d$ are nonzero and $d$ has exactly one candidate cell $x$ in some column, the same
+  holds.
+\end{enumerate}
+So a rule that places hidden singles in boxes and columns would remove no candidate from such a state.
 \end{proposition}
 \begin{proof}
-Let $x$ be in row $r$ and box $k$ of band $b$. \emph{Box.} If $x$ is $d$'s only candidate in box $k$, then column $k$ of
-$A^{d,b}$ has its single 1 in row $r$, so every perfect matching sends $r$ to $k$, and no entry $(r,k')$ with $k'\neq
-k$ is in $\mathrm{supp}(A^{d,b})$. By \cref{lem:fixedpoint}(a) the band rule leaves $M_{d,b}$ unchanged, so row $r$ has
-no candidates outside box $k$, and inside box $k$ only $x$. \emph{Column.} If $x$ is $d$'s only candidate in its column
-$3s+j$, then column $j$ of $B^{d,s}$ has its single 1 in row $b$, so every perfect matching sends $b$ to $j$ and
-$\mathrm{supp}(B^{d,s})$ has no other 1 in row $b$. By \cref{lem:fixedpoint}(b), band $b$ has no candidates for $d$ in
-the other columns of stack $s$, so $d$'s candidates in box $k$ (which is band $b$'s part of stack $s$) all lie in column
-$3s+j$, where the only one is $x$. So $x$ is $d$'s only candidate in its box, and the box case applies. In both cases
-\cref{lem:fixedpoint}(c) shows that $d$ is the only candidate of $x$.
+Let $x$ be in row $r$ and box $k$ of band $b$; box $k$ of the band lies in stack $k$, and $x$ is in column $3k+j$ for
+some $j\in\{0,1,2\}$.
+
+(a) Since $x$ is the only cell of box $k$ in $M_{d,b}$, the triads $(r',k)$ with $r'\neq r$ contain no cell of
+$M_{d,b}$: column $k$ of $A^{d,b}$ has a single 1, in row $r$. As $M_{d,b}\neq 0$, \cref{lem:fixedpoint}(b) gives
+$\mathrm{supp}(A^{d,b})=A^{d,b}\neq 0$, so $A^{d,b}$ has a perfect matching. Every perfect matching has a 1 in column $k$,
+which can only be $(r,k)$, so every perfect matching pairs row $r$ with box $k$, and none uses an entry $(r,k')$ with
+$k'\neq k$. These entries are therefore not in $\mathrm{supp}(A^{d,b})=A^{d,b}$: row $r$ has no candidate of $d$
+outside box $k$. Inside box $k$, the only candidate of $d$ is $x$. So $x$ is $d$'s only candidate cell in row $r$, and
+by \cref{lem:fixedpoint}(d) $d$ is the only candidate of $x$.
+
+(b) Since $x$ is $d$'s only candidate cell in column $3k+j$, column $j$ of $B^{d,k}$ has a single 1, in row $b$. As the
+three masks of $d$ are nonzero, \cref{lem:fixedpoint}(c) gives $\mathrm{supp}(B^{d,k})=B^{d,k}\neq 0$, and the
+argument of (a), with bands in place of rows and the stack's columns in place of boxes, shows that row $b$ of
+$B^{d,k}$ has no 1 other than $(b,j)$: band $b$ has candidates of $d$ in no column of stack $k$ except $3k+j$. The
+cells of band $b$ in stack $k$ are those of box $k$, so every candidate of $d$ in box $k$ is in column $3k+j$, where the
+only one is $x$. So $x$ is $d$'s only candidate cell in box $k$, and (a) applies.
 \end{proof}
+
+\noindent Part (b) needs the three masks of $d$ to be nonzero. A state where one is zero has no solutions, since $d$
+cannot be placed in that band, so a hidden single there cannot change which solutions are found. We found no such
+state among the 4{,}464{,}042 states that \textsc{Propagate} returned as open or solved on all 709{,}764 puzzles of the
+seven data sets, at limit 2.
 
 The proofs above are about the algorithm; they do not rule out coding errors. Two independent checks cover the code:
 every table is built from its definition at compile time, and the solver is tested against tdoku and against a naive
-counter on puzzles with zero, one and many solutions (\cref{sec:solver}).
+counter on puzzles with zero, one and many solutions (\cref{sec:pitfalls}).
 
 \section{Experimental setup}
 \label{sec:setup}
@@ -1397,7 +1513,7 @@ SIMDe and about 3 times faster than the SSE2 path, and 1.23 times faster than th
 
 \begin{table}[t]
 \centering
-\caption{tdoku on the M4 Max, seconds per puzzle, limit 2, under three ways of running its x86 SIMD code on
+\caption{tdoku on the M4 Max, microseconds per puzzle, limit 2, under three ways of running its x86 SIMD code on
 ARM~\cite{kelly2026tdokuarm}.}
 \label{tab:port}
 \small
@@ -1405,9 +1521,9 @@ ARM~\cite{kelly2026tdokuarm}.}
 \toprule
 data set & native NEON (our port) & SIMDe, SSE4.1 path & SIMDe, SSE2 path \\
 \midrule
-17 clue & \num{2.89e-6} & \num{3.68e-6} & \num{8.54e-6} \\
-magictour top 1465 & \num{8.04e-6} & \num{1.071e-5} & \num{2.400e-5} \\
-forum hardest 1106 & \num{7.24e-5} & \num{9.49e-5} & \num{2.199e-4} \\
+17 clue & 2.89 & 3.68 & 8.54 \\
+magictour top 1465 & 8.04 & 10.71 & 24.00 \\
+forum hardest 1106 & 72.4 & 94.9 & 219.9 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1423,7 +1539,7 @@ though: on AMD's Zen~3, which runs tdoku's 256-bit vectors natively, FastBandSol
 
 \begin{table}[t]
 \centering
-\caption{Time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2, median of 7 interleaved runs, Apple M4 Max.
+\caption{Time per puzzle in microseconds (guesses per puzzle in parentheses beneath), limit 2, median of 7 interleaved runs, Apple M4 Max.
 Every solver solves every puzzle with a valid solution and agrees on the solution counts. Guesses are each solver's
 own count of binary decisions. Between two complete runs of this benchmark on different occasions, every solver's
 times moved by up to 3\%, together; ratios between solvers moved by up to 0.03.}
@@ -1434,15 +1550,15 @@ times moved by up to 3\%, together; ratios between solvers moved by up to 0.03.}
 \toprule
 data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
 \midrule
-17 clue & 49158 & \textbf{\num{1.79e-6}} & \num{2.90e-6} & \num{2.38e-6} & \num{2.96e-6} & \num{1.45e-5} \\
+17 clue & 49158 & \textbf{1.79} & 2.90 & 2.38 & 2.96 & 14.5 \\
 && (0.68) & (0.57) & (2.37) & (0.60) & (4.51) \\[2pt]
-magictour top 1465 & 1465 & \textbf{\num{6.90e-6}} & \num{8.31e-6} & \num{1.00e-5} & \num{1.28e-5} & \num{6.42e-5} \\
+magictour top 1465 & 1465 & \textbf{6.90} & 8.31 & 10.0 & 12.8 & 64.2 \\
 && (10.3) & (8.94) & (22.0) & (12.1) & (33.9) \\[2pt]
-forum hardest 1106 & 375 & \textbf{\num{6.21e-5}} & \num{7.27e-5} & \num{1.07e-4} & \num{1.49e-4} & \num{5.62e-4} \\
+forum hardest 1106 & 375 & \textbf{62.1} & 72.7 & 107 & 149 & 562 \\
 && (138) & (110) & (363) & (183) & (326) \\[2pt]
-forum hardest 1905 11+ & 48766 & \textbf{\num{3.99e-5}} & \num{4.65e-5} & \num{5.59e-5} & \num{9.04e-5} & \num{2.72e-4} \\
+forum hardest 1905 11+ & 48766 & \textbf{39.9} & 46.5 & 55.9 & 90.4 & 272 \\
 && (81.0) & (61.7) & (167) & (100) & (142) \\[2pt]
-kaggle & 100000 & \textbf{\num{8.64e-7}} & \num{9.22e-7} & \num{1.17e-6} & \num{1.55e-6} & \num{7.48e-6} \\
+kaggle & 100000 & \textbf{0.864} & 0.922 & 1.17 & 1.55 & 7.48 \\
 && (0) & (0) & (0) & (0) & (0) \\[2pt]
 \bottomrule
 \end{tabular}
@@ -1489,9 +1605,9 @@ lookups are pure overhead.
 
 \begin{table}[t]
 \centering
-\caption{Ablation: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 2. Each variant is a separate
+\caption{Ablation: time per puzzle in microseconds (guesses per puzzle in parentheses beneath), limit 2. Each variant is a separate
 build of the same code; variants ran one after another, each taking the median of 5 runs per data set, and we report
-the better of two such sweeps.}
+the better of two such sweeps. $+$: the change is on; $-$: it is off.}
 \label{tab:ablation}
 \small
 \begin{tabular}{cccrrrrr}
@@ -1499,21 +1615,21 @@ the better of two such sweeps.}
 peer & stack & fewest & hardest 1106 & hardest 1905 & magictour & 17 clue & kaggle \\
 branching & rule & fallback & & & & & \\
 \midrule
- & & & \num{1.168e-4} & \num{6.03e-5} & \num{1.03e-5} & \num{2.11e-6} & \num{7.9e-7} \\
+$-$ & $-$ & $-$ & 116.8 & 60.3 & 10.3 & 2.11 & 0.79 \\
 &&& (361) & (166) & (22.0) & (2.4) & \\[2pt]
- & & \checkmark & \num{1.036e-4} & \num{5.77e-5} & \num{1.02e-5} & \num{2.00e-6} & \num{7.9e-7} \\
+$-$ & $-$ & $+$ & 103.6 & 57.7 & 10.2 & 2.00 & 0.79 \\
 &&& (305) & (155) & (21.7) & (1.9) & \\[2pt]
- & \checkmark & & \num{1.080e-4} & \num{5.42e-5} & \num{9.6e-6} & \num{2.00e-6} & \num{8.4e-7} \\
+$-$ & $+$ & $-$ & 108.0 & 54.2 & 9.6 & 2.00 & 0.84 \\
 &&& (315) & (144) & (18.8) & (1.4) & \\[2pt]
- & \checkmark & \checkmark & \num{9.27e-5} & \num{5.10e-5} & \num{9.5e-6} & \num{1.95e-6} & \num{8.5e-7} \\
+$-$ & $+$ & $+$ & 92.7 & 51.0 & 9.5 & 1.95 & 0.85 \\
 &&& (262) & (133) & (18.5) & (1.2) & \\[2pt]
-\checkmark & & & \num{8.51e-5} & \num{4.87e-5} & \num{7.3e-6} & \num{1.80e-6} & \num{7.9e-7} \\
+$+$ & $-$ & $-$ & 85.1 & 48.7 & 7.3 & 1.80 & 0.79 \\
 &&& (197) & (105) & (12.3) & (1.1) & \\[2pt]
-\checkmark & & \checkmark & \num{7.51e-5} & \num{4.62e-5} & \num{7.4e-6} & \num{1.74e-6} & \num{7.9e-7} \\
+$+$ & $-$ & $+$ & 75.1 & 46.2 & 7.4 & 1.74 & 0.79 \\
 &&& (173) & (99) & (12.1) & (0.9) & \\[2pt]
-\checkmark & \checkmark & & \num{7.02e-5} & \num{4.13e-5} & \num{6.9e-6} & \num{1.85e-6} & \num{8.5e-7} \\
+$+$ & $+$ & $-$ & 70.2 & 41.3 & 6.9 & 1.85 & 0.85 \\
 &&& (157) & (86) & (10.4) & (0.8) & \\[2pt]
-\checkmark & \checkmark & \checkmark & \textbf{\num{6.21e-5}} & \textbf{\num{3.94e-5}} & \textbf{\num{6.8e-6}} & \num{1.80e-6} & \num{8.4e-7} \\
+$+$ & $+$ & $+$ & \textbf{62.1} & \textbf{39.4} & \textbf{6.8} & 1.80 & 0.84 \\
 &&& (138) & (81) & (10.2) & (0.7) & \\[2pt]
 \bottomrule
 \end{tabular}
@@ -1527,13 +1643,13 @@ $1.18\times$ on the second forum set, $1.23\times$ on magictour, $1.61\times$ on
 JCZSolve comes closer at limit 1 than at limit 2, within 4\% on the hardest set, since stopping at the first solution
 removes much of the benefit of a smaller tree; tdoku still makes the fewest guesses. Measuring this exposed one cost that
 only limit 1 pays: copying out the solution first looked up each cell's digit by scanning the digits' masks, about
-\SI{5e-7}{\second} per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
+\SI{500}{\nano\second} per puzzle, enough to make kaggle slower than tdoku. Writing each digit into the cells of its masks instead
 removed it; the numbers here are with that change, which does not affect limit 2, where no solution is copied.
 \texttt{make sota LIMIT=1} reproduces the table for every solver but JCZSolve.
 
 \begin{table}[t]
 \centering
-\caption{Finding one solution: time per puzzle in seconds (guesses per puzzle in parentheses beneath), limit 1, median of 7
+\caption{Finding one solution: time per puzzle in microseconds (guesses per puzzle in parentheses beneath), limit 1, median of 7
 interleaved runs. Every solver finds a valid solution to every puzzle, and every solver writes it out.}
 \label{tab:limit1}
 \small
@@ -1542,15 +1658,15 @@ interleaved runs. Every solver finds a valid solution to every puzzle, and every
 \toprule
 data set & puzzles & FastBandSolver & tdoku & JCZSolve & jsolve & kudoku \\
 \midrule
-17 clue & 49158 & \textbf{\num{1.70e-6}} & \num{2.74e-6} & \num{2.08e-6} & \num{2.76e-6} & \num{8.20e-6} \\
+17 clue & 49158 & \textbf{1.70} & 2.74 & 2.08 & 2.76 & 8.20 \\
 && (0.56) & (0.46) & (1.53) & (0.48) & (2.95) \\[2pt]
-magictour top 1465 & 1465 & \textbf{\num{4.40e-6}} & \num{5.42e-6} & \num{6.04e-6} & \num{7.71e-6} & \num{3.15e-5} \\
+magictour top 1465 & 1465 & \textbf{4.40} & 5.42 & 6.04 & 7.71 & 31.5 \\
 && (6.85) & (6.07) & (13.3) & (8.06) & (18.0) \\[2pt]
-forum hardest 1106 & 375 & \textbf{\num{2.87e-5}} & \num{3.91e-5} & \num{3.00e-5} & \num{7.42e-5} & \num{2.78e-4} \\
+forum hardest 1106 & 375 & \textbf{28.7} & 39.1 & 30.0 & 74.2 & 278 \\
 && (65.9) & (59.8) & (98.9) & (101) & (168) \\[2pt]
-forum hardest 1905 11+ & 48766 & \textbf{\num{2.05e-5}} & \num{2.42e-5} & \num{2.77e-5} & \num{4.52e-5} & \num{1.35e-4} \\
+forum hardest 1905 11+ & 48766 & \textbf{20.5} & 24.2 & 27.7 & 45.2 & 135 \\
 && (44.0) & (34.2) & (84.8) & (52.8) & (75.4) \\[2pt]
-kaggle & 100000 & \textbf{\num{8.63e-7}} & \num{9.23e-7} & \num{1.13e-6} & \num{1.51e-6} & \num{5.57e-6} \\
+kaggle & 100000 & \textbf{0.863} & 0.923 & 1.13 & 1.51 & 5.57 \\
 && (0) & (0) & (0) & (0) & (0) \\[2pt]
 \bottomrule
 \end{tabular}
@@ -1639,7 +1755,7 @@ Intel Xeon 8481C (Sapphire Rapids) & AVX-512 & 1.05 & 0.73 & 0.71 & 0.70 & 0.80 
 
 \begin{table}[t]
 \centering
-\caption{Seconds per puzzle on forum hardest 1106, limit 2, on the machines of \cref{tab:x86}. Clock speeds differ
+\caption{Microseconds per puzzle on forum hardest 1106, limit 2, on the machines of \cref{tab:x86}. Clock speeds differ
 between the machines, so comparisons between rows are rough; \cref{tab:cycles} compares cycles instead.}
 \label{tab:x86times}
 \small
@@ -1647,15 +1763,15 @@ between the machines, so comparisons between rows are rough; \cref{tab:cycles} c
 \toprule
 processor & FastBandSolver & tdoku & jsolve & kudoku \\
 \midrule
-Apple M4 Max & \num{6.21e-5} & \num{7.27e-5} & \num{1.49e-4} & \num{5.62e-4} \\
+Apple M4 Max & 62.1 & 72.7 & 149 & 562 \\
 \midrule
-AMD EPYC 7763 (Zen 3), clang 14 & \num{9.57e-05} & \num{9.96e-05} & \num{2.40e-04} & \num{8.78e-04} \\
-AMD EPYC 7763 (Zen 3), clang 18 & \num{9.41e-05} & \num{9.46e-05} & \num{2.42e-04} & \num{8.37e-04} \\
-AMD EPYC 9V74 (Zen 4) & \num{7.78e-05} & \num{7.29e-05} & \num{2.04e-04} & \num{6.91e-04} \\
-AMD EPYC 9B14 (Zen 4) & \num{8.44e-05} & \num{7.88e-05} & \num{2.19e-04} & \num{7.42e-04} \\
-Intel Xeon 8370C (Ice Lake) & \num{1.01e-04} & \num{6.93e-05} & \num{2.68e-04} & \num{9.44e-04} \\
-Intel Xeon (Ice Lake) & \num{1.04e-04} & \num{6.96e-05} & \num{2.63e-04} & \num{9.33e-04} \\
-Intel Xeon 8481C (Sapphire Rapids) & \num{1.10e-04} & \num{7.76e-05} & \num{2.79e-04} & \num{1.02e-03} \\
+AMD EPYC 7763 (Zen 3), clang 14 & 95.7 & 99.6 & 240 & 878 \\
+AMD EPYC 7763 (Zen 3), clang 18 & 94.1 & 94.6 & 242 & 837 \\
+AMD EPYC 9V74 (Zen 4) & 77.8 & 72.9 & 204 & 691 \\
+AMD EPYC 9B14 (Zen 4) & 84.4 & 78.8 & 219 & 742 \\
+Intel Xeon 8370C (Ice Lake) & 101 & 69.3 & 268 & 944 \\
+Intel Xeon (Ice Lake) & 104 & 69.6 & 263 & 933 \\
+Intel Xeon 8481C (Sapphire Rapids) & 110 & 77.6 & 279 & 1020 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1936,7 +2052,7 @@ of each node (band updates, the dominant cost), and computed two bounds.
   needs branches to be handed out as the search goes.
 \end{itemize}
 
-The obstacle is size. A node takes about \SI{2e-7}{\second} on average, so moving work between cores has to cost less than that,
+The obstacle is size. A node takes about \SI{200}{\nano\second} on average, so moving work between cores has to cost less than that,
 or be limited to branches large enough to be worth it.
 
 \subsection{ParallelBandSolver}
@@ -1949,8 +2065,8 @@ each found by measurement on a prototype, make it faster than one thread rather 
 \begin{itemize}
 \item \textbf{No sleeping on the queue.} With an ordinary mutex, every idle thread tried to take a new branch at once, and
   under that contention the operating system put threads to sleep, which costs more than a whole puzzle: with 8 threads
-  the hardest set took \SI{1.77e-4}{\second} per puzzle instead of \SI{5.6e-5}{\second}. A try-lock, where a thread that finds the queue busy keeps
-  spinning, together with the depth limit below, brought 4 threads to \SI{2.5e-5}{\second}.
+  the hardest set took \SI{177}{\micro\second} per puzzle instead of \SI{56}{\micro\second}. A try-lock, where a thread that finds the queue busy keeps
+  spinning, together with the depth limit below, brought 4 threads to \SI{25}{\micro\second}.
 \item \textbf{Only near the top.} Branches are handed out only while fewer than 8 guesses deep, where subtrees are large.
 \item \textbf{Only for hard puzzles.} A puzzle is searched by the calling thread alone until it has taken 16 nodes, so
   easy puzzles never involve the other threads.
@@ -1961,9 +2077,9 @@ each found by measurement on a prototype, make it faster than one thread rather 
 
 \begin{table}[t]
 \centering
-\caption{Latency: time per puzzle in seconds, limit 2, one puzzle at a time, median of 5 runs. tdoku and
+\caption{Latency: time per puzzle in microseconds, limit 2, one puzzle at a time, median of 5 runs. tdoku and
 FastBandSolver use one thread; ParallelBandSolver uses the number of threads shown, with one pool of threads alive at a time (in a first run with four pools alive at once, whose idle workers interfered,
-4 threads took \SI{4.09e-5}{\second} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
+4 threads took \SI{40.9}{\micro\second} on the hardest set). All solvers agree with tdoku on every puzzle. Not a like-for-like
 comparison with tdoku, which uses one core.}
 \label{tab:latency}
 \footnotesize
@@ -1974,22 +2090,22 @@ comparison with tdoku, which uses one core.}
 \cmidrule(lr){4-7}
 data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
 \midrule
-17 clue & \num{2.98e-6} & \num{1.85e-6} & \num{1.88e-6} & \num{1.91e-6} & \num{1.90e-6} & \num{2.00e-6} \\
-magictour top 1465 & \num{8.20e-6} & \num{6.97e-6} & \num{6.44e-6} & \textbf{\num{6.29e-6}} & \num{6.34e-6} & \num{9.06e-6} \\
-forum hardest 1106 & \num{7.37e-5} & \num{6.27e-5} & \num{4.09e-5} & \num{3.30e-5} & \textbf{\num{2.95e-5}} & \num{6.37e-5} \\
-forum hardest 1905 11+ & \num{4.80e-5} & \num{4.13e-5} & \num{2.80e-5} & \num{2.53e-5} & \textbf{\num{2.44e-5}} & \num{4.57e-5} \\
-kaggle & \num{9.51e-7} & \num{8.71e-7} & \num{8.70e-7} & \num{8.74e-7} & \num{8.72e-7} & \num{8.72e-7} \\
+17 clue & 2.98 & 1.85 & 1.88 & 1.91 & 1.90 & 2.00 \\
+magictour top 1465 & 8.20 & 6.97 & 6.44 & \textbf{6.29} & 6.34 & 9.06 \\
+forum hardest 1106 & 73.7 & 62.7 & 40.9 & 33.0 & \textbf{29.5} & 63.7 \\
+forum hardest 1905 11+ & 48.0 & 41.3 & 28.0 & 25.3 & \textbf{24.4} & 45.7 \\
+kaggle & 0.951 & 0.871 & 0.870 & 0.874 & 0.872 & 0.872 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \Cref{tab:latency} gives the results; \texttt{make parallel} reproduces them. With 4 threads, the hardest set takes
-\SI{2.95e-5}{\second} per puzzle instead of \SI{6.27e-5}{\second} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's \SI{7.37e-5}{\second}), and the
-second forum set \SI{2.44e-5}{\second} instead of \SI{4.13e-5}{\second} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
+\SI{29.5}{\micro\second} per puzzle instead of \SI{62.7}{\micro\second} on one thread ($2.13\times$, and $2.50\times$ faster than tdoku's \SI{73.7}{\micro\second}), and the
+second forum set \SI{24.4}{\micro\second} instead of \SI{41.3}{\micro\second} ($1.69\times$); magictour gains $1.11\times$ at 3 threads.
 
 \begin{table}[t]
 \centering
-\caption{Latency at limit 1 (one solution, written out): time per puzzle in seconds, median of 5 runs, as in
+\caption{Latency at limit 1 (one solution, written out): time per puzzle in microseconds, median of 5 runs, as in
 \cref{tab:latency}.}
 \label{tab:latency1}
 \footnotesize
@@ -2000,18 +2116,18 @@ second forum set \SI{2.44e-5}{\second} instead of \SI{4.13e-5}{\second} ($1.69\t
 \cmidrule(lr){4-7}
 data set & tdoku & FastBandSolver & 2 & 3 & 4 & 6 \\
 \midrule
-17 clue & \num{2.75e-6} & \num{1.69e-6} & \num{1.72e-6} & \num{1.74e-6} & \num{1.73e-6} & \num{1.81e-6} \\
-magictour top 1465 & \num{5.30e-6} & \num{4.42e-6} & \textbf{\num{4.21e-6}} & \num{4.30e-6} & \num{4.42e-6} & \num{6.13e-6} \\
-forum hardest 1106 & \num{3.86e-5} & \num{2.89e-5} & \num{2.00e-5} & \num{1.74e-5} & \textbf{\num{1.65e-5}} & \num{4.00e-5} \\
-forum hardest 1905 11+ & \num{2.44e-5} & \num{2.06e-5} & \num{1.49e-5} & \textbf{\num{1.34e-5}} & \num{1.34e-5} & \num{3.10e-5} \\
-kaggle & \num{9.36e-7} & \num{8.71e-7} & \num{8.61e-7} & \num{8.65e-7} & \num{8.61e-7} & \num{8.58e-7} \\
+17 clue & 2.75 & 1.69 & 1.72 & 1.74 & 1.73 & 1.81 \\
+magictour top 1465 & 5.30 & 4.42 & \textbf{4.21} & 4.30 & 4.42 & 6.13 \\
+forum hardest 1106 & 38.6 & 28.9 & 20.0 & 17.4 & \textbf{16.5} & 40.0 \\
+forum hardest 1905 11+ & 24.4 & 20.6 & 14.9 & \textbf{13.4} & 13.4 & 31.0 \\
+kaggle & 0.936 & 0.871 & 0.861 & 0.865 & 0.861 & 0.858 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 At limit 1 (\cref{tab:latency1}, \texttt{make parallel LIMIT=1}) the pattern is the same: 4 threads take the hardest set
-from \SI{2.89e-5}{\second} to \SI{1.65e-5}{\second} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
-\SI{1.34e-5}{\second} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
+from \SI{28.9}{\micro\second} to \SI{16.5}{\micro\second} ($1.75\times$, and $2.33\times$ faster than tdoku), 3 threads the second forum set from 20.6 to
+\SI{13.4}{\micro\second} ($1.54\times$), and the easy sets are unchanged. The gains are smaller than at limit 2 because the search stops
 at the first solution, so there is less of the tree to share.
 The easy sets are not helped: kaggle is unchanged, since its puzzles never reach the sharing threshold, and 17-clue is
 about 3\% slower. Beyond 4 threads the times get worse again. Our explanation, which we could not test directly, is that
@@ -2037,7 +2153,7 @@ no data races.
 \label{sec:negative}
 
 We tried six other directions before the design above. Each was measured on the hardest set against tdoku's
-\SI{7.5e-5}{\second} and 110 guesses; we report them because each is a natural idea and none paid off here.
+\SI{75}{\micro\second} and 110 guesses; we report them because each is a natural idea and none paid off here.
 
 \paragraph{Template search.} The template or pattern-overlay method~\cite{stuart2008pom} treats each digit's placements as one
 of 46{,}656 templates.\footnote{Count them band by band. In the first band, choose which box each row uses (6 ways)
@@ -2055,12 +2171,12 @@ than the pattern overlay method and shows that single-digit deduction is NP-hard
 \paragraph{Search-tree nodes in SIMD lanes.} With a limit of 2 on a puzzle with one solution, the whole tree must be
 searched, so the order of nodes does not matter and several nodes can be propagated at once. We wrote a branch-free
 propagation round that runs one board per 32-bit lane of NEON registers, and verified it inside a one-board search
-against tdoku on all five sets; we did not build the scheduler that keeps the lanes full. One round costs \SI{7.4e-8}{\second} per
-board with 4 lanes (3{,}344 instructions per round for 4 boards, IPC 2.8), \SI{6.2e-8}{\second} with 8 and \SI{5e-8}{\second} with 16, and a
+against tdoku on all five sets; we did not build the scheduler that keeps the lanes full. One round costs \SI{74}{\nano\second} per
+board with 4 lanes (3{,}344 instructions per round for 4 boards, IPC 2.8), \SI{62}{\nano\second} with 8 and \SI{50}{\nano\second} with 16, and a
 node needs 3.9 rounds to reach a fixed point; capping the rounds grows the tree faster than it saves work (1{,}340
 board-rounds per puzzle at two rounds per node vs.\ 1{,}119 at the fixed point). That projects to \SIrange{2.4e-7}{2.9e-7}{\second} per
-node with 4--8 lanes, above the roughly \SI{2.2e-7}{\second} per node of JCZSolve's incremental engine under the same peer-count
-branching, and \SI{1.95e-7}{\second} with 16 lanes, near parity before any scheduling cost. We stopped there: a frontier of 16 nodes
+node with 4--8 lanes, above the roughly \SI{220}{\nano\second} per node of JCZSolve's incremental engine under the same peer-count
+branching, and \SI{195}{\nano\second} with 16 lanes, near parity before any scheduling cost. We stopped there: a frontier of 16 nodes
 cannot be kept full over most of a tree of a few hundred nodes. Two things are missing: NEON has no gather, so the $3\times 3$ matching takes about 40 bit
 operations instead of one lookup in a 512-entry table, and full rounds recompute all 27 (digit, band) masks where an
 incremental engine touches only the changed ones.
@@ -2073,17 +2189,17 @@ results; the extra bookkeeping cost more than the overlap gained.
 
 \paragraph{Lookahead.} Probing both children of the best-scored two-candidate cells before branching, and taking a
 failed probe as a free deduction, shrinks the tree fourfold: with JCZSolve's engine and 2 probed cells per node the
-guesses fall from 199 to 49 on the hardest set. The time rises from \SI{8.7e-5}{\second} to \SI{1.02e-4}{\second}, and probing only near the root, at
+guesses fall from 199 to 49 on the hardest set. The time rises from \SI{87}{\micro\second} to \SI{102}{\micro\second}, and probing only near the root, at
 any threshold we tried, was never faster than not probing. In a slower reference solver the tree fell further (18
 guesses with 64 probed cells), but at 1{,}282 probes per puzzle. This probing is what Simonis calls
 \emph{shaving}~\cite{simonis2005sudoku}, which he found a strong filter in constraint models; our result is that in a
 fast band solver it costs more than it saves.
 
-\paragraph{Richer rules and branching.} Triad rules for mini-rows and mini-columns (a mini-row whose cells admit exactly
-three digits must hold all three, and three digits forced into a mini-row exclude the others) reduced the tree by
+\paragraph{Richer rules and branching.} Triad rules for horizontal and vertical triads (a triad whose cells admit exactly
+three digits must hold all three, and three digits forced into a triad exclude the others) reduced the tree by
 6--10\%, not enough to pay for themselves. Scoring bivalue cells and bilocations (a digit with two places left in a
 unit) by the candidates they touch reduced the tree by another 18\% in the reference solver (121 vs.\ 148 guesses),
-but computing the score cost about \SI{9e-7}{\second} per branch node in a band solver, more than it saved. Scoring by the peer
+but computing the score cost about \SI{900}{\nano\second} per branch node in a band solver, more than it saved. Scoring by the peer
 candidates of the cell's two digits saves 1.5\% of guesses and costs 17\% of time. Branching on band configurations
 as tdoku does was worse than peer-count branching with our rules (169 vs.\ 142 guesses).
 
@@ -2095,7 +2211,7 @@ for the middle band), so the join alone is millions of pairs.
 \paragraph{Fewer mispredicted branches.} After the design above, we tried to remove the branches behind its
 mispredictions (\cref{sec:why}), each change timed against the unchanged solver in 7 alternating runs per data set on
 the M4, with identical guess counts and, where the change touched the propagation, the full check of
-\cref{sec:proofs}. Placing row singles without first testing whether any row is new (the step then does nothing when
+\cref{sec:pitfalls}. Placing row singles without first testing whether any row is new (the step then does nothing when
 none is): 0.998--1.005 times the original time over the five sets. Running the stack rule on every band update instead
 of only when the columns change: 0.997--1.003. Collecting the changed (digit, band) pairs into a bit mask once per pass
 and visiting only those, instead of testing all 27: 0.999--1.003. Choosing the best two-candidate cell without a

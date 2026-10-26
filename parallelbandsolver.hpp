@@ -44,7 +44,7 @@ class ParallelBandSolver {
 		ParallelBandSolver &operator=(ParallelBandSolver const &) = delete;
 
 		bool solve(const int in[9][9], int out[9][9]);
-		int countSolutions(const int in[9][9], int limit = 2);
+		int countSolutions(const int in[9][9], int maxSolutions = 2);
 		bool hasUniqueSolution(const int in[9][9]) { return countSolutions(in, 2) == 1; }
 
 		// binary decisions made by the last call, over all threads (as FastBandSolver counts them)
@@ -75,7 +75,7 @@ class ParallelBandSolver {
 		};
 
 		int limit = 0;
-		int *solutionOut = nullptr;
+		int (*solutionOut)[9] = nullptr;   // the caller's 9 x 9 grid for the first solution; nullptr = only count
 		std::atomic<int> found{0};
 		std::atomic<bool> stop{false};
 		std::atomic<bool> sharing{false};   // this puzzle may hand branches to workers
@@ -94,11 +94,11 @@ class ParallelBandSolver {
 		// (A FastBandSolver holds 82 states itself, too big to create at every node.)
 		std::unique_ptr<FB> engine = std::make_unique<FB>();
 
-		int run(const int in[9][9], int maxSolutions, int *solution);
-		void search(Worker &w, State *s, int depth);
-		void record(State const &s);
+		int run(const int in[9][9], int maxSolutions, int (*solution)[9]);
+		void search(Worker &w, State *state, int depth);
+		void record(State const &state);
 		bool pop(Task &out);
-		void push(State const &s, int depth);
+		void push(State const &state, int depth);
 		void workerLoop();
 
 		static void pause() {
@@ -130,10 +130,7 @@ inline ParallelBandSolver::~ParallelBandSolver() {
 
 
 inline bool ParallelBandSolver::solve(const int in[9][9], int out[9][9]) {
-	int solution[81];
-	if (run(in, 1, solution) == 0) return false;
-	for (int cell = 0; cell < 81; cell++) out[cell / 9][cell % 9] = solution[cell];
-	return true;
+	return run(in, 1, out) > 0;  // the solution is written straight into out
 }
 
 
@@ -142,7 +139,7 @@ inline int ParallelBandSolver::countSolutions(const int in[9][9], int maxSolutio
 }
 
 
-inline int ParallelBandSolver::run(const int in[9][9], int maxSolutions, int *solution) {
+inline int ParallelBandSolver::run(const int in[9][9], int maxSolutions, int (*solution)[9]) {
 	limit = maxSolutions;
 	solutionOut = solution;
 	found.store(0);
@@ -191,25 +188,25 @@ inline bool ParallelBandSolver::pop(Task &out) {
 }
 
 
-inline void ParallelBandSolver::push(State const &s, int depth) {
+inline void ParallelBandSolver::push(State const &state, int depth) {
 	pending.fetch_add(1, std::memory_order_relaxed);
 	while (lock.test_and_set(std::memory_order_acquire)) pause();
-	queue.push_back(Task{s, depth});
+	queue.push_back(Task{state, depth});
 	queued.fetch_add(1, std::memory_order_release);
 	lock.clear(std::memory_order_release);
 	sharedTotal.fetch_add(1, std::memory_order_relaxed);
 }
 
 
-inline void ParallelBandSolver::record(State const &s) {
+inline void ParallelBandSolver::record(State const &state) {
 	int index = found.fetch_add(1);
 	if (index + 1 >= limit) stop.store(true);
-	if (index == 0 && solutionOut) FB::writeSolution(s, solutionOut);
+	if (index == 0 && solutionOut) FB::writeSolution(state, solutionOut);
 }
 
 
 // FastBandSolver::search, with the option of handing the second branch to another thread
-inline void ParallelBandSolver::search(Worker &w, State *s, int depth) {
+inline void ParallelBandSolver::search(Worker &w, State *state, int depth) {
 	if (stop.load(std::memory_order_relaxed)) return;
 	w.nodes++;
 	if (&w == caller.get() && !sharing.load(std::memory_order_relaxed) && w.nodes >= shareAfterNodes && !threads.empty()) {
@@ -219,57 +216,57 @@ inline void ParallelBandSolver::search(Worker &w, State *s, int depth) {
 		active.notify_all();
 	}
 	Mask pairs[3];
-	int progress = engine->propagate(*s, pairs);
-	if (progress == 0) return;
-	if (progress == 2) {
-		record(*s);
+	FB::Progress progress = engine->propagate(*state, pairs);
+	if (progress == FB::Progress::Contradiction) return;
+	if (progress == FB::Progress::Solved) {
+		record(*state);
 		return;
 	}
 	int bestBand = -1, bestScore = -1;
 	Mask bestCell = 0;
 	for (int band = 0; band < 3; band++) {
 		for (Mask p = pairs[band]; p; p &= p - 1) {
-			int score = FB::peerScore(*s, band, std::countr_zero(p));
+			int score = FB::peerScore(*state, band, std::countr_zero(p));
 			if (score > bestScore) bestScore = score, bestBand = band, bestCell = p & -p;
 		}
 	}
 	if (bestBand >= 0) {
 		int first = 0;
-		while (!(s->cells[first * 3 + bestBand] & bestCell)) first++;
+		while (!(state->valueToBand[first][bestBand] & bestCell)) first++;
 		int second = first + 1;
-		while (!(s->cells[second * 3 + bestBand] & bestCell)) second++;
+		while (!(state->valueToBand[second][bestBand] & bestCell)) second++;
 		w.guesses++;
-		State *child = s + 1;
-		std::memcpy(child, s, sizeof(State));
+		State *child = state + 1;
+		std::memcpy(child, state, sizeof(State));
 		FB::place(*child, first, bestBand, bestCell);
-		FB::place(*s, second, bestBand, bestCell);
+		FB::place(*state, second, bestBand, bestCell);
 		if (depth < maxShareDepth && sharing.load(std::memory_order_relaxed) &&
 		    hungry.load(std::memory_order_relaxed) > queued.load(std::memory_order_relaxed)) {
-			push(*s, depth + 1);
+			push(*state, depth + 1);
 			search(w, child, depth + 1);
 			return;
 		}
 		search(w, child, depth + 1);
-		search(w, s, depth + 1);
+		search(w, state, depth + 1);
 		return;
 	}
 	// no cell with two candidates: every candidate of a cell with the fewest, searched here
 	int fewest = 10;
 	for (int band = 0; band < 3; band++) {
-		for (Mask u = s->unsolved[band]; u; u &= u - 1) {
-			int index = std::countr_zero(u), n = 0;
-			for (int digit = 0; digit < 9; digit++) n += (s->cells[digit * 3 + band] >> index) & 1;
+		for (Mask u = state->unsolved[band]; u; u &= u - 1) {
+			int bitIndex = std::countr_zero(u), n = 0;
+			for (int digit = 0; digit < 9; digit++) n += (state->valueToBand[digit][band] >> bitIndex) & 1;
 			if (n > fewest) continue;
-			int score = FB::peerScore(*s, band, index);
+			int score = FB::peerScore(*state, band, bitIndex);
 			if (n < fewest || score > bestScore) fewest = n, bestScore = score, bestBand = band, bestCell = u & -u;
 		}
 	}
 	w.guesses += fewest - 1;
 	for (int digit = 0; digit < 9; digit++) {
 		if (stop.load(std::memory_order_relaxed)) return;
-		if (!(s->cells[digit * 3 + bestBand] & bestCell)) continue;
-		State *child = s + 1;
-		std::memcpy(child, s, sizeof(State));
+		if (!(state->valueToBand[digit][bestBand] & bestCell)) continue;
+		State *child = state + 1;
+		std::memcpy(child, state, sizeof(State));
 		FB::place(*child, digit, bestBand, bestCell);
 		search(w, child, depth + 1);
 	}
